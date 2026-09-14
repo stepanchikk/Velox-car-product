@@ -3,8 +3,10 @@ import CoreMotion
 import Combine
 
 class SensorManager: ObservableObject {
+    // Головний об'єкт Apple для роботи з датчиками руху
     private var motionManager = CMMotionManager()
     
+    // Властивості @Published автоматично оновлюватимуть інтерфейс при зміні значень
     @Published var x: Double = 0.0
     @Published var y: Double = 0.0
     @Published var z: Double = 0.0
@@ -14,12 +16,14 @@ class SensorManager: ObservableObject {
     private var csvData: [String] = []
     
     func startSensors() {
+        // Перевірка, чи датчик взагалі доступний
         if motionManager.isAccelerometerAvailable {
             // Очищаємо старі дані і створюємо заголовки стовпців
             csvData = ["Timestamp,X,Y,Z"]
             
             motionManager.accelerometerUpdateInterval = 0.1
             
+            // Запуск збору даних в основному потоці
             motionManager.startAccelerometerUpdates(to: .main) { [weak self] data, error in
                 guard let self = self, let data = data, error == nil else { return }
                 
