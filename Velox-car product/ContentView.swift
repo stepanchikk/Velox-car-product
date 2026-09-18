@@ -19,28 +19,45 @@ struct ContentView: View {
                 Text("Z: \(String(format: "%.2f", sensorManager.filteredZ))")
             }
             .font(.title)
-            .monospacedDigit() // Замінили проблемний рядок на цей
+            .monospacedDigit()
             .padding(30)
             .background(Color.gray.opacity(0.1))
             .cornerRadius(20)
             
-            // Кнопка керування
-            Button(action: {
-                if sensorManager.isRecording {
-                    sensorManager.stopSensors()
-                } else {
-                    sensorManager.startSensors()
+            
+            
+            HStack {
+                Button(action: {
+                    if sensorManager.isRecording {
+                        sensorManager.stopSensors()
+                    } else {
+                        sensorManager.startSensors()
+                    }
+                }) {
+                    Text(sensorManager.isRecording ? "Зупинити" : "Старт")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .frame(width: 200, height: 50)
+                        .background(sensorManager.isRecording ? Color.red : Color.green)
+                        .cornerRadius(30)
+                    
+                    Button(action: {
+                        sensorManager.resetData()
+                    }) {
+                        Text("Скинути")
+                            .bold()
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(sensorManager.isRecording ? Color.gray.opacity(0.5) : Color.red)
+                            .foregroundColor(.white)
+                            .cornerRadius(30)
+                    }
+                    .disabled(sensorManager.isRecording)
                 }
-            }) {
-                Text(sensorManager.isRecording ? "Зупинити" : "Старт")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .frame(width: 200, height: 60)
-                    .background(sensorManager.isRecording ? Color.red : Color.green)
-                    .cornerRadius(30)
             }
+            .padding()
         }
-        .padding()
     }
 }
+    
