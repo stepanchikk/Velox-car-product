@@ -1,7 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Вкажи точну назву свого файлу
 file_name = 'Velox_2026-09-14_11-44-48.csv'
 
 try:
@@ -17,10 +16,10 @@ try:
 
     plt.figure(figsize=(14, 7))
 
-    # Сирі дані (малюємо блідо-червоним, щоб вони були на фоні)
+    # Сирі дані малюємо блідо-червоним, щоб вони були на фоні
     plt.plot(df['Timestamp'], df['Y'], label='Сирі дані Y (Шум і вібрації)', color='red', alpha=0.3)
 
-    # Згладжені дані (малюємо жирним синім, це наш чистий рух)
+    # Згладжені дані малюємо жирним синім, це наш чистий рух
     plt.plot(df['Timestamp'], df['Y_smooth'], label='Відфільтрована вісь Y (Реальне гальмування)', color='blue',
              linewidth=3)
 
