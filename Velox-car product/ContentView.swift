@@ -14,9 +14,9 @@ struct ContentView: View {
                     .font(.headline)
                     .foregroundColor(.gray)
                 
-                Text("X: \(String(format: "%.2f", sensorManager.x))")
-                Text("Y: \(String(format: "%.2f", sensorManager.y))")
-                Text("Z: \(String(format: "%.2f", sensorManager.z))")
+                Text("X: \(String(format: "%.2f", sensorManager.filteredX))")
+                Text("Y: \(String(format: "%.2f", sensorManager.filteredY))")
+                Text("Z: \(String(format: "%.2f", sensorManager.filteredZ))")
             }
             .font(.title)
             .monospacedDigit() // Замінили проблемний рядок на цей

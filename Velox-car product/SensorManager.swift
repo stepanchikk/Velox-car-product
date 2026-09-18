@@ -3,37 +3,51 @@ import CoreMotion
 import Combine
 
 class SensorManager: ObservableObject {
-    // Головний об'єкт Apple для роботи з датчиками руху
     private var motionManager = CMMotionManager()
     
-    // Властивості @Published автоматично оновлюватимуть інтерфейс при зміні значень
+    // Сирі дані (для логування)
     @Published var x: Double = 0.0
     @Published var y: Double = 0.0
     @Published var z: Double = 0.0
-    @Published var isRecording: Bool = false
     
-    // Масив для збереження рядків таблиці
+    // Відфільтровані дані
+    @Published var filteredX: Double = 0.0
+    @Published var filteredY: Double = 0.0
+    @Published var filteredZ: Double = 0.0
+    
+    @Published var isRecording: Bool = false
     private var csvData: [String] = []
     
+    // Коефіцієнт фільтрації. 0.2 означає: 20% нових даних + 80% історії
+    private let filterFactor = 0.2
+    
     func startSensors() {
-        // Перевірка, чи датчик взагалі доступний
         if motionManager.isAccelerometerAvailable {
-            // Очищаємо старі дані і створюємо заголовки стовпців
-            csvData = ["Timestamp,X,Y,Z"]
-            
+            // Тепер у CSV є сирі і відфільтровані дані для порівняння
+            csvData = ["Timestamp,Raw_X,Raw_Y,Raw_Z,Filtered_X,Filtered_Y,Filtered_Z"]
             motionManager.accelerometerUpdateInterval = 0.1
             
-            // Запуск збору даних в основному потоці
+            // Скидаємо початкові значення фільтра перед новим записом
+            filteredX = 0.0
+            filteredY = 0.0
+            filteredZ = 0.0
+            
             motionManager.startAccelerometerUpdates(to: .main) { [weak self] data, error in
                 guard let self = self, let data = data, error == nil else { return }
                 
+                // 1. Отримуємо сирі дані
                 self.x = data.acceleration.x
                 self.y = data.acceleration.y
                 self.z = data.acceleration.z
                 
-                // Фіксуємо точний час (UNIX) та записуємо координати
+                // 2. Застосовуємо Low-Pass Filter
+                self.filteredX = (self.x * self.filterFactor) + (self.filteredX * (1.0 - self.filterFactor))
+                self.filteredY = (self.y * self.filterFactor) + (self.filteredY * (1.0 - self.filterFactor))
+                self.filteredZ = (self.z * self.filterFactor) + (self.filteredZ * (1.0 - self.filterFactor))
+                
+                // 3. Записуємо все у файл
                 let timestamp = Date().timeIntervalSince1970
-                let row = "\(timestamp),\(self.x),\(self.y),\(self.z)"
+                let row = "\(timestamp),\(self.x),\(self.y),\(self.z),\(self.filteredX),\(self.filteredY),\(self.filteredZ)"
                 self.csvData.append(row)
             }
             isRecording = true
@@ -47,17 +61,13 @@ class SensorManager: ObservableObject {
     }
     
     private func saveDataToCSV() {
-        // З'єднуємо всі рядки через перенесення
         let csvString = csvData.joined(separator: "\n")
-        
-        // Знаходимо папку документів додатку на iPhone
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         guard let documentDirectory = paths.first else { return }
         
-        // Генеруємо унікальну назву з датою
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let fileName = "Velox_\(formatter.string(from: Date())).csv"
+        let fileName = "Velox_Filtered_\(formatter.string(from: Date())).csv"
         
         let fileURL = documentDirectory.appendingPathComponent(fileName)
         
