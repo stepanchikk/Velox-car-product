@@ -60,6 +60,19 @@ class SensorManager: ObservableObject {
         saveDataToCSV()
     }
     
+    
+    func resetData() {
+        filteredX = 0.0
+        filteredY = 0.0
+        filteredZ = 0.0
+        x = 0.0
+        y = 0.0
+        z = 0.0
+        csvData = ["Timestamp,Raw_X,Raw_Y,Raw_Z,Filtered_X,Filtered_Y,Filtered_Z"]
+    }
+    
+    
+    
     private func saveDataToCSV() {
         let csvString = csvData.joined(separator: "\n")
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
