@@ -12,6 +12,8 @@
 
 /* Begin PBXFileReference section */
 		FD20040E30548A4200C62B37 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		FD6EB087305D22E200F1B110 /* analyzer.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = analyzer.py; sourceTree = "<group>"; };
+		FD6EB088305D22E200F1B110 /* Velox_2026-09-14_11-44-48.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_2026-09-14_11-44-48.csv"; sourceTree = "<group>"; };
 		FD9DAC80305349500025AF32 /* Velox-car product.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Velox-car product.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -34,9 +36,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		FD6EB089305D22E200F1B110 /* Analytics */ = {
+			isa = PBXGroup;
+			children = (
+				FD6EB087305D22E200F1B110 /* analyzer.py */,
+				FD6EB088305D22E200F1B110 /* Velox_2026-09-14_11-44-48.csv */,
+			);
+			path = Analytics;
+			sourceTree = "<group>";
+		};
 		FD9DAC77305349500025AF32 = {
 			isa = PBXGroup;
 			children = (
+				FD6EB089305D22E200F1B110 /* Analytics */,
 				FD20040E30548A4200C62B37 /* README.md */,
 				FD9DAC82305349500025AF32 /* Velox-car product */,
 				FD9DAC81305349500025AF32 /* Products */,
@@ -272,7 +284,7 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -309,7 +321,7 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
