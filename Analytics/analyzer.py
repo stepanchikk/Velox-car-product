@@ -1,36 +1,46 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import glob
+import os
 
-file_name = 'Velox_2026-09-14_11-44-48.csv'
+csv_files = glob.glob("*.csv")
 
-try:
-    df = pd.read_csv(file_name)
-    df['Timestamp'] = df['Timestamp'] - df['Timestamp'].iloc[0]
-
-    # МАТЕМАТИЧНА ФІЛЬТРАЦІЯ
-    # Створюємо вікно розміром 10 значень (це рівно 1 секунда реального часу)
-    window_size = 20
-
-    # Створюємо нову колонку зі згладженими даними
-    df['Y_smooth'] = df['Y'].rolling(window=window_size).mean()
-
+if not csv_files:
+    print("CSV файли не знайдені. Переконайтеся, що вони лежать у тій самій папці, що й скрипт.")
+else:
     plt.figure(figsize=(14, 7))
 
-    # Сирі дані малюємо блідо-червоним, щоб вони були на фоні
-    plt.plot(df['Timestamp'], df['Y'], label='Сирі дані Y (Шум і вібрації)', color='red', alpha=0.3)
+    colors = ['blue', 'green', 'orange', 'purple', 'red']
 
-    # Згладжені дані малюємо жирним синім, це наш чистий рух
-    plt.plot(df['Timestamp'], df['Y_smooth'], label='Відфільтрована вісь Y (Реальне гальмування)', color='blue',
-             linewidth=3)
+    print("--- Результати аналізу заїздів ---")
 
-    plt.title('Аналіз фільтрації шумів: Ковзне середнє (1 секунда)', fontsize=16)
-    plt.xlabel('Час (секунди)', fontsize=12)
-    plt.ylabel('Перевантаження (G-force)', fontsize=12)
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.legend(loc='upper right')
+    for i, file_path in enumerate(csv_files):
+        df = pd.read_csv(file_path)
 
-    plt.tight_layout()
+        # Нормалізуємо час (щоб усі графіки починалися з 0 секунд)
+        df['Time_Normalized'] = df['Timestamp'] - df['Timestamp'].iloc[0]
+
+        color = colors[i % len(colors)]
+        file_name = os.path.basename(file_path)
+
+        # лінія для відфільтрованих даних
+        plt.plot(df['Time_Normalized'], df['Filtered_Y'], label=f'{file_name}', color=color, linewidth=2)
+
+        #максимальне і мінімальне значення
+        max_accel = df['Filtered_Y'].max()
+        max_brake = df['Filtered_Y'].min()
+        print(f"Файл: {file_name}")
+        print(f"  -> Макс. розгін: {max_accel:.3f} G")
+        print(f"  -> Макс. гальмування (модуль): {abs(max_brake):.3f} G\n")
+
+    plt.title('Порівняння тестових заїздів: Вісь Y (Відфільтровані дані)')
+    plt.xlabel('Час від початку заїзду (секунди)')
+    plt.ylabel('Перевантаження (G)')
+    plt.legend()
+    plt.grid(True)
+
+    # орієнтовні червоні лінії на 0.4 та -0.4 для наочності
+    plt.axhline(y=0.4, color='red', linestyle='--', alpha=0.5, label='Орієнтовний поріг')
+    plt.axhline(y=-0.4, color='red', linestyle='--', alpha=0.5)
+
     plt.show()
-
-except FileNotFoundError:
-    print(f"Помилка: Файл '{file_name}' не знайдено.")
