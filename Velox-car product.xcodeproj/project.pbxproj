@@ -16,6 +16,7 @@
 		FD8CB2143060921700E2CC80 /* Velox_Filtered_2026-09-19_22-38-25.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-19_22-38-25.csv"; sourceTree = "<group>"; };
 		FD8CB2153060921700E2CC80 /* Velox_Filtered_2026-09-20_13-22-41.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-20_13-22-41.csv"; sourceTree = "<group>"; };
 		FD8CB2163060921700E2CC80 /* Velox_Filtered_2026-09-20_13-32-06.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-20_13-32-06.csv"; sourceTree = "<group>"; };
+		FD8CB217306092E800E2CC80 /* Вставлено 2026-09-21 о 1.16.40.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Вставлено 2026-09-21 о 1.16.40.png"; sourceTree = "<group>"; };
 		FD9DAC80305349500025AF32 /* Velox-car product.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Velox-car product.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -45,6 +46,7 @@
 				FD8CB2143060921700E2CC80 /* Velox_Filtered_2026-09-19_22-38-25.csv */,
 				FD8CB2153060921700E2CC80 /* Velox_Filtered_2026-09-20_13-22-41.csv */,
 				FD8CB2163060921700E2CC80 /* Velox_Filtered_2026-09-20_13-32-06.csv */,
+				FD8CB217306092E800E2CC80 /* Вставлено 2026-09-21 о 1.16.40.png */,
 			);
 			path = Analytics;
 			sourceTree = "<group>";
