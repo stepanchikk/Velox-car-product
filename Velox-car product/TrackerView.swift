@@ -4,60 +4,139 @@ struct TrackerView: View {
     @StateObject private var sensorManager = SensorManager()
     
     var body: some View {
-        VStack(spacing: 40) {
-            Text("Velox")
-                .font(.system(size: 40, weight: .black, design: .rounded))
+        VStack(spacing: 20) {
+            Text("Телеметрія")
+                .font(.largeTitle)
+                .bold()
+                .padding(.top, 20)
             
-            // Блок з показниками акселерометра
-            VStack(spacing: 20) {
-                Text("G-Force")
-                    .font(.headline)
-                    .foregroundColor(.gray)
-                
-                Text("X: \(String(format: "%.2f", sensorManager.filteredX))")
-                Text("Y: \(String(format: "%.2f", sensorManager.filteredY))")
-                Text("Z: \(String(format: "%.2f", sensorManager.filteredZ))")
-            }
-            .font(.title)
-            .monospacedDigit()
-            .padding(30)
-            .background(Color.gray.opacity(0.1))
-            .cornerRadius(20)
-            
-            
-            
+            // Динамічний статус телефону
             HStack {
+                Text("Статус:")
+                    .font(.headline)
+                Spacer()
+                Text(sensorManager.phoneState)
+                    .bold()
+                    .foregroundColor(statusColor(for: sensorManager.phoneState))
+            }
+            .padding()
+            .background(Color(UIColor.secondarySystemBackground))
+            .cornerRadius(15)
+            .padding(.horizontal)
+            
+            // Штрафні бали (Відволікання)
+            EventCard(title: "Штраф: Телефон у руці", count: sensorManager.distractionScore, color: .purple)
+                .padding(.horizontal)
+            
+            // Лічильники подій (Маневри)
+            HStack(spacing: 15) {
+                EventCard(title: "Розгони", count: sensorManager.hardAccelerationCount, color: .orange)
+                EventCard(title: "Гальмування", count: sensorManager.hardBrakingCount, color: .red)
+            }
+            .padding(.horizontal)
+            
+            // Блок поточного перевантаження
+            VStack(spacing: 15) {
+                DataRow(label: "Вісь Y (Прискорення)", value: sensorManager.currentGForceY)
+            }
+            .padding()
+            .background(Color(UIColor.secondarySystemBackground))
+            .cornerRadius(15)
+            .padding(.horizontal)
+            
+            Spacer()
+            
+            // Кнопки управління
+            HStack(spacing: 15) {
                 Button(action: {
                     if sensorManager.isRecording {
-                        sensorManager.stopSensors()
+                        sensorManager.stopRecording()
                     } else {
-                        sensorManager.startSensors()
+                        sensorManager.startRecording()
                     }
                 }) {
                     Text(sensorManager.isRecording ? "Зупинити" : "Старт")
-                        .font(.title2)
-                        .fontWeight(.bold)
+                        .font(.headline)
                         .foregroundColor(.white)
-                        .frame(width: 200, height: 50)
+                        .frame(maxWidth: .infinity)
+                        .padding()
                         .background(sensorManager.isRecording ? Color.red : Color.green)
-                        .cornerRadius(30)
-                    
-                    Button(action: {
-                        sensorManager.resetData()
-                    }) {
-                        Text("Скинути")
-                            .bold()
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(sensorManager.isRecording ? Color.gray.opacity(0.5) : Color.red)
-                            .foregroundColor(.white)
-                            .cornerRadius(30)
-                    }
-                    .disabled(sensorManager.isRecording)
+                        .cornerRadius(12)
+                }
+                
+                Button(action: {
+                    sensorManager.resetData()
+                }) {
+                    Text("Скинути")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.gray)
+                        .cornerRadius(12)
                 }
             }
-            .padding()
+            .padding(.horizontal)
+            .padding(.bottom, 30)
+        }
+        // ОСЬ ТУТ МИ ЛОВИМО ВСІ ДОТИКИ ДО ЕКРАНА
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged({ _ in
+                    sensorManager.registerScreenTouch()
+                })
+        )
+    }
+    
+    // Допоміжна функція для визначення кольору статусу
+    private func statusColor(for state: String) -> Color {
+        // Додані перевірки на нові "штрафні" статуси
+        if state.contains("руці") || state.contains("Тремор") || state.contains("Дотик") || state.contains("згорнуто") { return .red }
+        if state.contains("Калібрування") { return .orange }
+        if state.contains("Стабільний") { return .green }
+        return .primary
+    }
+}
+
+// Компонент для красивого відображення подій
+struct EventCard: View {
+    var title: String
+    var count: Int
+    var color: Color
+    
+    var body: some View {
+        VStack(spacing: 10) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            
+            Text("\(count)")
+                .font(.system(size: 42, weight: .bold, design: .rounded))
+                .foregroundColor(color)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 15)
+        .background(Color(UIColor.secondarySystemBackground))
+        .cornerRadius(15)
+    }
+}
+
+// Компонент для рядка з цифрами
+struct DataRow: View {
+    var label: String
+    var value: Double
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundColor(.primary)
+            Spacer()
+            Text(String(format: "%.3f G", value))
+                .bold()
+                .font(.system(.body, design: .monospaced))
+                .foregroundColor(abs(value) > 0.4 ? .red : .primary)
         }
     }
 }
-    
