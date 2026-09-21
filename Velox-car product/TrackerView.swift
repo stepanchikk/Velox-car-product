@@ -25,7 +25,7 @@ struct TrackerView: View {
             .padding(.horizontal)
             
             // Штрафні бали (Відволікання)
-            EventCard(title: "Штраф: Телефон у руці", count: sensorManager.distractionScore, color: .purple)
+            EventCard(title: "Штраф: Відволікання", count: sensorManager.distractionScore, color: .purple)
                 .padding(.horizontal)
             
             // Лічильники подій (Маневри)
@@ -79,21 +79,11 @@ struct TrackerView: View {
             .padding(.horizontal)
             .padding(.bottom, 30)
         }
-        // ОСЬ ТУТ МИ ЛОВИМО ВСІ ДОТИКИ ДО ЕКРАНА
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged({ _ in
-                    sensorManager.registerScreenTouch()
-                })
-        )
     }
     
-    // Допоміжна функція для визначення кольору статусу
     private func statusColor(for state: String) -> Color {
-        // Додані перевірки на нові "штрафні" статуси
-        if state.contains("руці") || state.contains("Тремор") || state.contains("Дотик") || state.contains("згорнуто") { return .red }
-        if state.contains("Калібрування") { return .orange }
-        if state.contains("Стабільний") { return .green }
+        if state.contains("Відволікання") { return .red }
+        if state.contains("Запис") { return .green }
         return .primary
     }
 }
@@ -123,7 +113,6 @@ struct EventCard: View {
     }
 }
 
-// Компонент для рядка з цифрами
 struct DataRow: View {
     var label: String
     var value: Double

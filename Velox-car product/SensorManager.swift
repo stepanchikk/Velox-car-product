@@ -15,39 +15,35 @@ class SensorManager: ObservableObject {
     @Published var phoneState: String = "Очікування"
     
     private var lastEventTime: Date = Date.distantPast
-    private var stableTicks: Int = 0
-    private var rotationTicks: Int = 0
     
-    // Історія для аналізу мікротремору (живої руки)
-    private var pitchHistory: [Double] = []
-    private var rollHistory: [Double] = []
+    // Змінні для запису CSV
+    private var csvData: [String] = []
+    private var fileName: String = ""
+    private var startTime: Date = Date()
     
     init() {
-        // Підписуємося на сповіщення про згортання додатка
-        NotificationCenter.default.addObserver(self, selector: #selector(appMovedToBackground), name: UIApplication.willResignActiveNotification, object: nil)
+        // ЗАХИСТ: Згортання додатка АБО відкриття шторки сповіщень
+        NotificationCenter.default.addObserver(self, selector: #selector(appLostFocus), name: UIApplication.willResignActiveNotification, object: nil)
+        
+        // Повернення в додаток
+        NotificationCenter.default.addObserver(self, selector: #selector(appGainedFocus), name: UIApplication.didBecomeActiveNotification, object: nil)
     }
     
-    // 1. ЗАХИСТ: Згортання додатка
-    @objc private func appMovedToBackground() {
+    @objc private func appLostFocus() {
         guard isRecording else { return }
         DispatchQueue.main.async {
-            self.distractionScore += 5 // Серйозний штраф за соцмережі/месенджери
-            self.phoneState = "Додаток згорнуто! 📱"
-            self.stableTicks = 0
+            self.distractionScore += 5
+            self.phoneState = "Відволікання! ⚠️"
             self.triggerHapticFeedback(style: .error)
         }
     }
     
-    // 2. ЗАХИСТ: Дотики до екрана (викликається з UI)
-    func registerScreenTouch() {
+    @objc private func appGainedFocus() {
         guard isRecording else { return }
-        DispatchQueue.main.async {
-            // Штрафуємо тільки якщо телефон вважався стабільним
-            if self.phoneState == "Стабільний рух ✅" {
-                self.distractionScore += 1
-                self.phoneState = "Дотик до екрана! 👆"
-                self.stableTicks = 0 // Збиваємо калібрування
-                self.triggerHapticFeedback(style: .warning)
+        // Через 2 секунди після повернення в додаток повертаємо зелений статус
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            if self.isRecording {
+                self.phoneState = "Запис іде ✅"
             }
         }
     }
@@ -56,7 +52,16 @@ class SensorManager: ObservableObject {
         guard motionManager.isDeviceMotionAvailable else { return }
         isRecording = true
         resetData()
-        phoneState = "Стабільний рух"
+        phoneState = "Запис іде ✅"
+        
+        // Ініціалізація CSV
+        startTime = Date()
+        csvData.removeAll()
+        csvData.append("Timestamp,Filtered_Y,State")
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        fileName = "Velox_Data_\(formatter.string(from: Date())).csv"
         
         motionManager.deviceMotionUpdateInterval = 0.1
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] (motion, error) in
@@ -69,58 +74,29 @@ class SensorManager: ObservableObject {
         isRecording = false
         phoneState = "Очікування"
         motionManager.stopDeviceMotionUpdates()
+        saveCSV()
     }
     
     func resetData() {
         hardBrakingCount = 0; hardAccelerationCount = 0; distractionScore = 0
         currentGForceY = 0.0
         phoneState = "Очікування"
-        stableTicks = 0; rotationTicks = 0
-        pitchHistory.removeAll(); rollHistory.removeAll()
+        csvData.removeAll()
     }
     
     private func processMotionData(_ motion: CMDeviceMotion) {
-        let rotX = motion.rotationRate.x, rotY = motion.rotationRate.y, rotZ = motion.rotationRate.z
-        let rotationMagnitude = sqrt(rotX*rotX + rotY*rotY + rotZ*rotZ)
+        let accelY = motion.userAcceleration.y
         
-        // 3. ЗАХИСТ: Аналіз мікротремору (чи лежить телефон на твердому)
-        pitchHistory.append(motion.attitude.pitch)
-        rollHistory.append(motion.attitude.roll)
-        if pitchHistory.count > 10 { pitchHistory.removeFirst() }
-        if rollHistory.count > 10 { rollHistory.removeFirst() }
-        
-        let pitchRange = (pitchHistory.max() ?? 0) - (pitchHistory.min() ?? 0)
-        let rollRange = (rollHistory.max() ?? 0) - (rollHistory.min() ?? 0)
-        
-        // Якщовання кута в межах від 0.002 до 0.05 - це мікротремор руки.
-        // Менше 0.002 - це твердий пластик авто. Більше 0.05 - це вже активний рух.
-        let isHandTremor = (pitchRange > 0.002 && pitchRange < 0.05) || (rollRange > 0.002 && rollRange < 0.05)
-        
-        if rotationMagnitude > 1.5 || isHandTremor {
-            rotationTicks += 1
-            if rotationTicks >= 3 {
-                DispatchQueue.main.async {
-                    self.phoneState = isHandTremor ? "Жива рука (Тремор) 🖐" : "Телефон крутять! ❌"
-                    self.stableTicks = 0
-                    if Int.random(in: 1...15) == 1 { // Трохи рідше даємо штраф, щоб не дратувати
-                        self.distractionScore += 1
-                        self.triggerHapticFeedback(style: .warning)
-                    }
-                }
-            }
-        } else {
-            rotationTicks = 0
-            if stableTicks < 20 {
-                stableTicks += 1
-                DispatchQueue.main.async { self.phoneState = "Калібрування... ⏳" }
-            } else {
-                DispatchQueue.main.async { self.phoneState = "Стабільний рух ✅" }
-                let accelY = motion.userAcceleration.y
-                DispatchQueue.main.async {
-                    self.currentGForceY = (0.2 * accelY) + (0.8 * self.currentGForceY)
-                    self.detectManeuvers(currentY: self.currentGForceY)
-                }
-            }
+        DispatchQueue.main.async {
+            // Low-Pass фільтр
+            self.currentGForceY = (0.2 * accelY) + (0.8 * self.currentGForceY)
+            self.detectManeuvers(currentY: self.currentGForceY)
+            
+            // Запис у CSV
+            let timestamp = Date().timeIntervalSince(self.startTime)
+            let safeState = self.phoneState.replacingOccurrences(of: ",", with: "")
+            let row = "\(timestamp),\(self.currentGForceY),\(safeState)"
+            self.csvData.append(row)
         }
     }
     
@@ -142,5 +118,18 @@ class SensorManager: ObservableObject {
     private func triggerHapticFeedback(style: UINotificationFeedbackGenerator.FeedbackType) {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(style)
+    }
+    
+    private func saveCSV() {
+        let csvString = csvData.joined(separator: "\n")
+        if let documentDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let fileURL = documentDirectory.appendingPathComponent(fileName)
+            do {
+                try csvString.write(to: fileURL, atomically: true, encoding: .utf8)
+                print("✅ Файл успішно збережено: \(fileURL.path)")
+            } catch {
+                print("❌ Помилка збереження файлу: \(error)")
+            }
+        }
     }
 }
