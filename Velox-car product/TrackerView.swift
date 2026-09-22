@@ -116,7 +116,7 @@ struct EventCard: View {
 struct DataRow: View {
     var label: String
     var value: Double
-    
+
     var body: some View {
         HStack {
             Text(label)
@@ -125,7 +125,7 @@ struct DataRow: View {
             Text(String(format: "%.3f G", value))
                 .bold()
                 .font(.system(.body, design: .monospaced))
-                .foregroundColor(abs(value) > 0.4 ? .red : .primary)
+                .foregroundColor(abs(value) > SensorManager.maneuverThreshold ? .red : .primary)
         }
     }
 }
