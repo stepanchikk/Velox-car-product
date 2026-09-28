@@ -24,6 +24,31 @@ struct TrackerView: View {
             .cornerRadius(15)
             .padding(.horizontal)
             
+            // Калібрування: прогрес, підказка або результат
+            if sensorManager.isCalibrating {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(sensorManager.calibrationInfo)
+                        .font(.subheadline)
+                        .foregroundColor(.orange)
+                    ProgressView(value: sensorManager.calibrationProgress)
+                        .tint(.orange)
+                }
+                .padding()
+                .background(Color(UIColor.secondarySystemBackground))
+                .cornerRadius(15)
+                .padding(.horizontal)
+            } else if sensorManager.isRecording {
+                Text(sensorManager.calibrationInfo)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Після натискання «Старт» тримайте телефон нерухомо приблизно 2 секунди - калібрування визначить вертикаль автоматично, у будь-якому положенні телефона. Якщо доступна геолокація, після цього проїдьте прямо кілька секунд, щоб визначити напрям руху.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            
             // Штрафні бали (Відволікання)
             EventCard(title: "Штраф: Відволікання", count: sensorManager.distractionScore, color: .purple)
                 .padding(.horizontal)
@@ -37,7 +62,7 @@ struct TrackerView: View {
             
             // Блок поточного перевантаження
             VStack(spacing: 15) {
-                DataRow(label: "Вісь Y (Прискорення)", value: sensorManager.currentGForceY)
+                DataRow(label: "Поздовжнє прискорення", value: sensorManager.currentGForceY)
             }
             .padding()
             .background(Color(UIColor.secondarySystemBackground))
@@ -45,6 +70,31 @@ struct TrackerView: View {
             .padding(.horizontal)
             
             Spacer()
+            
+            // Ручне перекалібрування: лише під час запису і лише "на стоянці"
+            // (перекалібрування на ходу вимагає GPS-фази і відволікає від керування)
+            VStack(spacing: 4) {
+                Button(action: {
+                    sensorManager.recalibrate()
+                }) {
+                    Text("Перекалібрувати")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.orange)
+                        .cornerRadius(12)
+                }
+                .disabled(!canRecalibrateNow)
+                .opacity(canRecalibrateNow ? 1.0 : 0.4)
+
+                if sensorManager.isRecording && !sensorManager.canManuallyRecalibrate {
+                    Text("Доступно лише коли авто стоїть")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal)
             
             // Кнопки управління
             HStack(spacing: 15) {
@@ -87,7 +137,12 @@ struct TrackerView: View {
         }
     }
     
+    private var canRecalibrateNow: Bool {
+        sensorManager.isRecording && !sensorManager.isCalibrating && sensorManager.canManuallyRecalibrate
+    }
+
     private func statusColor(for state: String) -> Color {
+        if state.contains("Калібрування") { return .orange }
         if state.contains("Відволікання") { return .red }
         if state.contains("Запис") { return .green }
         return .primary
