@@ -13,10 +13,16 @@
 /* Begin PBXFileReference section */
 		FD20040E30548A4200C62B37 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		FD6EB087305D22E200F1B110 /* analyzer.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = analyzer.py; sourceTree = "<group>"; };
+		FD810F2B306B007F005AAC22 /* distribution.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = distribution.png; sourceTree = "<group>"; };
+		FD810F2C306B007F005AAC22 /* summary.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = summary.csv; sourceTree = "<group>"; };
+		FD810F2D306B007F005AAC22 /* threshold_sensitivity.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = threshold_sensitivity.png; sourceTree = "<group>"; };
+		FD810F2E306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-44_alpha_comparison.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Velox_Data_2026-09-25_13-18-44_alpha_comparison.png"; sourceTree = "<group>"; };
+		FD810F2F306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-44_raw_vs_filtered.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Velox_Data_2026-09-25_13-18-44_raw_vs_filtered.png"; sourceTree = "<group>"; };
+		FD810F30306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-58_alpha_comparison.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Velox_Data_2026-09-25_13-18-58_alpha_comparison.png"; sourceTree = "<group>"; };
+		FD810F31306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-58_raw_vs_filtered.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Velox_Data_2026-09-25_13-18-58_raw_vs_filtered.png"; sourceTree = "<group>"; };
 		FD8CB2143060921700E2CC80 /* Velox_Filtered_2026-09-19_22-38-25.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-19_22-38-25.csv"; sourceTree = "<group>"; };
 		FD8CB2153060921700E2CC80 /* Velox_Filtered_2026-09-20_13-22-41.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-20_13-22-41.csv"; sourceTree = "<group>"; };
 		FD8CB2163060921700E2CC80 /* Velox_Filtered_2026-09-20_13-32-06.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-20_13-32-06.csv"; sourceTree = "<group>"; };
-		FD8CB217306092E800E2CC80 /* Вставлено 2026-09-21 о 1.16.40.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Вставлено 2026-09-21 о 1.16.40.png"; sourceTree = "<group>"; };
 		FD9DAC80305349500025AF32 /* Velox-car product.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Velox-car product.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -46,9 +52,23 @@
 				FD8CB2143060921700E2CC80 /* Velox_Filtered_2026-09-19_22-38-25.csv */,
 				FD8CB2153060921700E2CC80 /* Velox_Filtered_2026-09-20_13-22-41.csv */,
 				FD8CB2163060921700E2CC80 /* Velox_Filtered_2026-09-20_13-32-06.csv */,
-				FD8CB217306092E800E2CC80 /* Вставлено 2026-09-21 о 1.16.40.png */,
+				FD810F32306B007F005AAC22 /* figures */,
 			);
 			path = Analytics;
+			sourceTree = "<group>";
+		};
+		FD810F32306B007F005AAC22 /* figures */ = {
+			isa = PBXGroup;
+			children = (
+				FD810F2B306B007F005AAC22 /* distribution.png */,
+				FD810F2C306B007F005AAC22 /* summary.csv */,
+				FD810F2D306B007F005AAC22 /* threshold_sensitivity.png */,
+				FD810F2E306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-44_alpha_comparison.png */,
+				FD810F2F306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-44_raw_vs_filtered.png */,
+				FD810F30306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-58_alpha_comparison.png */,
+				FD810F31306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-58_raw_vs_filtered.png */,
+			);
+			path = figures;
 			sourceTree = "<group>";
 		};
 		FD9DAC77305349500025AF32 = {
