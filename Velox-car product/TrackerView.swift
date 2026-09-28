@@ -79,6 +79,12 @@ struct TrackerView: View {
             .padding(.horizontal)
             .padding(.bottom, 30)
         }
+        // Повідомлення користувачу: помилки сенсора, результат збереження
+        .alert("Velox", isPresented: $sensorManager.showAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(sensorManager.alertMessage)
+        }
     }
     
     private func statusColor(for state: String) -> Color {

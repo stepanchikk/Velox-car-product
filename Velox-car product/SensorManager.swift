@@ -6,8 +6,18 @@ import UIKit
 class SensorManager: ObservableObject {
     private let motionManager = CMMotionManager()
 
-    // ФІКС 1: єдина константа порогу замість захардкоджених 0.4 у різних місцях
+    // Єдина константа порогу перевантаження
     static let maneuverThreshold: Double = 0.4
+
+    // Пауза між двома зафіксованими маневрами
+    private static let maneuverCooldown: TimeInterval = 3.0
+    // БАГФІКС 2: скільки секунд після старту ігноруємо втрату фокусу
+    // (натискання кнопки, системні вікна, що з'являються одразу після старту)
+    private static let distractionGracePeriod: TimeInterval = 3.0
+    // БАГФІКС 2: мінімальний інтервал між двома штрафами за відволікання
+    // (захист від "дребезгу" при відкритті шторки чи Центру керування)
+    private static let distractionCooldown: TimeInterval = 1.5
+    private static let distractionPenalty: Int = 5
 
     @Published var isRecording = false
     @Published var currentGForceY: Double = 0.0
@@ -17,10 +27,12 @@ class SensorManager: ObservableObject {
     @Published var distractionScore: Int = 0
     @Published var phoneState: String = "Очікування"
 
-    private var lastEventTime: Date = Date.distantPast
+    // БАГФІКС 3 і 4: повідомлення для користувача (помилки та підтвердження)
+    @Published var showAlert = false
+    @Published var alertMessage = ""
 
-    // ФІКС 3: подія, що чекає запису в найближчий рядок CSV
-    private var pendingEvent: String = ""
+    private var lastEventTime: Date = Date.distantPast
+    private var lastDistractionTime: Date = Date.distantPast
 
     // Змінні для запису CSV
     private var csvData: [String] = []
@@ -28,48 +40,74 @@ class SensorManager: ObservableObject {
     private var startTime: Date = Date()
 
     init() {
-        // ЗАХИСТ: Згортання додатка АБО відкриття шторки сповіщень
+        // ЗАХИСТ: згортання додатка АБО відкриття шторки сповіщень
         NotificationCenter.default.addObserver(self, selector: #selector(appLostFocus), name: UIApplication.willResignActiveNotification, object: nil)
 
         // Повернення в додаток
         NotificationCenter.default.addObserver(self, selector: #selector(appGainedFocus), name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
-    // ФІКС 2: прибираємо спостерігачів, коли об'єкт звільняється з пам'яті
+    // Прибираємо спостерігачів і зупиняємо сенсор, коли об'єкт звільняється з пам'яті
     deinit {
         NotificationCenter.default.removeObserver(self)
+        motionManager.stopDeviceMotionUpdates()
     }
 
+    // MARK: - Життєвий цикл додатка (Anti-Fraud)
+
     @objc private func appLostFocus() {
-        guard isRecording else { return }
-        DispatchQueue.main.async {
-            self.distractionScore += 5
-            self.phoneState = "Відволікання!"
-            self.pendingEvent = "Distraction"
-            self.triggerHapticFeedback(style: .error)
+        DispatchQueue.main.async { [weak self] in
+            self?.handleFocusLost()
         }
+    }
+
+    private func handleFocusLost() {
+        guard isRecording else { return }
+        let now = Date()
+
+        // БАГФІКС 2: не штрафуємо одразу після старту та не дублюємо штраф
+        guard now.timeIntervalSince(startTime) > Self.distractionGracePeriod,
+              now.timeIntervalSince(lastDistractionTime) > Self.distractionCooldown else { return }
+        lastDistractionTime = now
+
+        distractionScore += Self.distractionPenalty
+        phoneState = "Відволікання!"
+
+        // БАГФІКС 6: пишемо подію в CSV одразу, а не чекаємо наступного
+        // виміру акселерометра (у фоні вимірювання можуть не надходити)
+        appendCSVRow(event: "Distraction")
+        triggerHapticFeedback(style: .error)
     }
 
     @objc private func appGainedFocus() {
         guard isRecording else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            if self.isRecording {
-                self.phoneState = "Запис іде"
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self, self.isRecording else { return }
+            self.phoneState = "Запис іде"
         }
     }
 
+    // MARK: - Керування записом
+
     func startRecording() {
-        guard motionManager.isDeviceMotionAvailable else { return }
-        isRecording = true
+        guard !isRecording else { return }
+
+        // БАГФІКС 3: користувач бачить причину, чому запис не почався
+        guard motionManager.isDeviceMotionAvailable else {
+            showMessage("Акселерометр недоступний. Перевірте дозволи та запускайте застосунок на фізичному iPhone (у симуляторі сенсорів немає).")
+            return
+        }
+
+        // Спершу очищаємо дані, потім вмикаємо запис
         resetData()
+        isRecording = true
         phoneState = "Запис іде"
 
         // Ініціалізація CSV
         startTime = Date()
-        csvData.removeAll()
-        // ФІКС 3: додана колонка Event
-        csvData.append("Timestamp,Filtered_Y,State,Event")
+        lastEventTime = Date.distantPast
+        lastDistractionTime = Date.distantPast
+        csvData = ["Timestamp,Filtered_Y,State,Event"]
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
@@ -77,60 +115,85 @@ class SensorManager: ObservableObject {
 
         motionManager.deviceMotionUpdateInterval = 0.1
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] (motion, error) in
-            guard let motion = motion, error == nil else { return }
-            self?.processMotionData(motion)
+            guard let self = self else { return }
+            if let error = error {
+                self.handleMotionError(error)
+                return
+            }
+            guard let motion = motion else { return }
+            self.processMotionData(motion)
         }
     }
 
-    func stopRecording() {
+    func stopRecording(reason: String? = nil) {
+        guard isRecording else { return }
         isRecording = false
         phoneState = "Очікування"
         motionManager.stopDeviceMotionUpdates()
-        saveCSV()
+
+        // БАГФІКС 4: повідомляємо результат збереження
+        let saveResult = saveCSV()
+        if let reason = reason {
+            showMessage(reason + "\n" + saveResult)
+        } else {
+            showMessage(saveResult)
+        }
     }
 
+    // БАГФІКС 1: скидання не руйнує CSV, поки триває запис
     func resetData() {
-        hardBrakingCount = 0; hardAccelerationCount = 0; distractionScore = 0
+        hardBrakingCount = 0
+        hardAccelerationCount = 0
+        distractionScore = 0
         currentGForceY = 0.0
-        phoneState = "Очікування"
-        pendingEvent = ""
-        csvData.removeAll()
+
+        if !isRecording {
+            phoneState = "Очікування"
+            csvData.removeAll()
+        }
+    }
+
+    // MARK: - Обробка даних
+
+    private func handleMotionError(_ error: Error) {
+        guard isRecording else { return }
+        stopRecording(reason: "Втрачено зв'язок із сенсором: \(error.localizedDescription)")
     }
 
     private func processMotionData(_ motion: CMDeviceMotion) {
-        let accelY = motion.userAcceleration.y
+        // Захист від запізнілого виклику після зупинки запису
+        guard isRecording else { return }
 
-        DispatchQueue.main.async {
-            // Low-Pass фільтр
-            self.currentGForceY = (0.2 * accelY) + (0.8 * self.currentGForceY)
-            self.detectManeuvers(currentY: self.currentGForceY)
+        // Low-Pass фільтр (колбек уже приходить у головній черзі)
+        currentGForceY = (0.2 * motion.userAcceleration.y) + (0.8 * currentGForceY)
+        let event = detectManeuvers(currentY: currentGForceY)
 
-            // Запис у CSV
-            let timestamp = Date().timeIntervalSince(self.startTime)
-            let safeState = self.phoneState.replacingOccurrences(of: ",", with: "")
-            let row = "\(timestamp),\(self.currentGForceY),\(safeState),\(self.pendingEvent)"
-            self.csvData.append(row)
-
-            self.pendingEvent = ""
-        }
+        // Запис у CSV
+        appendCSVRow(event: event)
     }
 
-    private func detectManeuvers(currentY: Double) {
+    private func detectManeuvers(currentY: Double) -> String {
         let now = Date()
-        if now.timeIntervalSince(lastEventTime) < 3.0 { return }
+        guard now.timeIntervalSince(lastEventTime) >= Self.maneuverCooldown else { return "" }
 
-        // ФІКС 1: використовуємо спільну константу
         if currentY < -Self.maneuverThreshold {
             hardBrakingCount += 1
-            pendingEvent = "HardBraking"
             triggerHapticFeedback(style: .error)
             lastEventTime = now
+            return "HardBraking"
         } else if currentY > Self.maneuverThreshold {
             hardAccelerationCount += 1
-            pendingEvent = "HardAcceleration"
             triggerHapticFeedback(style: .error)
             lastEventTime = now
+            return "HardAcceleration"
         }
+        return ""
+    }
+
+    private func appendCSVRow(event: String) {
+        let timestamp = Date().timeIntervalSince(startTime)
+        let safeState = phoneState.replacingOccurrences(of: ",", with: "")
+        csvData.append("\(timestamp),\(currentGForceY),\(safeState),\(event)")
     }
 
     private func triggerHapticFeedback(style: UINotificationFeedbackGenerator.FeedbackType) {
@@ -138,16 +201,31 @@ class SensorManager: ObservableObject {
         generator.notificationOccurred(style)
     }
 
-    private func saveCSV() {
+    // MARK: - Збереження
+
+    private func showMessage(_ text: String) {
+        alertMessage = text
+        showAlert = true
+    }
+
+    // Повертає текст результату для показу користувачу
+    private func saveCSV() -> String {
+        // БАГФІКС 4: якщо є лише заголовок, файл не створюємо
+        guard csvData.count > 1 else {
+            return "Даних для збереження немає, файл не створено."
+        }
+
+        guard let documentDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return "Не вдалося знайти папку для збереження файлу."
+        }
+
+        let fileURL = documentDirectory.appendingPathComponent(fileName)
         let csvString = csvData.joined(separator: "\n")
-        if let documentDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let fileURL = documentDirectory.appendingPathComponent(fileName)
-            do {
-                try csvString.write(to: fileURL, atomically: true, encoding: .utf8)
-                print("Файл успішно збережено: \(fileURL.path)")
-            } catch {
-                print("Помилка збереження файлу: \(error)")
-            }
+        do {
+            try csvString.write(to: fileURL, atomically: true, encoding: .utf8)
+            return "Дані поїздки збережено: \(fileName)"
+        } catch {
+            return "Помилка збереження файлу: \(error.localizedDescription)"
         }
     }
 }
