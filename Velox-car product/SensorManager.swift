@@ -13,13 +13,19 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // Коефіцієнт Low-Pass фільтра
     static let filterAlpha: Double = 0.2
 
-    // Пауза між двома зафіксованими маневрами
+    // Пауза між двома зафіксованими маневрами (окремо для гальмування і
+    // розгону, щоб один не "з'їдав" паузу для іншого - якщо гальмування і
+    // розгін трапляються з різницею менше cooldown, обидва мають зарахуватись)
     private static let maneuverCooldown: TimeInterval = 3.0
     // Скільки секунд після старту ігноруємо втрату фокусу
     private static let distractionGracePeriod: TimeInterval = 3.0
     // Мінімальний інтервал між двома штрафами за відволікання
     private static let distractionCooldown: TimeInterval = 1.5
     private static let distractionPenalty: Int = 5
+
+    // Safety Score: 100 балів базово, штраф за кожен маневр і кожен факт
+    // відволікання (README: -2 за маневр, -5 за відволікання)
+    private static let maneuverPenalty: Int = 2
 
     // Автоматичне перекалібрування: на скільки градусів має змінитись нахил
     // телефона і як довго (секунд) ця зміна має тривати
@@ -44,6 +50,15 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var distractionScore: Int = 0
     @Published var phoneState: String = "Очікування"
 
+    // Обчислюється з лічильників вище, тому завжди узгоджений з ними і
+    // автоматично скидається разом з resetData(). distractionScore уже
+    // містить накопичений штраф (5 за подію), тому додається як є.
+    var safetyScore: Int {
+        let maneuvers = hardBrakingCount + hardAccelerationCount
+        let penalty = Self.maneuverPenalty * maneuvers + distractionScore
+        return max(0, 100 - penalty)
+    }
+
     // Повідомлення для користувача (помилки та підтвердження)
     @Published var showAlert = false
     @Published var alertMessage = ""
@@ -53,7 +68,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var orientationChangedSince: TimeInterval?
     private var locationAuthorized = false
 
-    private var lastEventTime: Date = Date.distantPast
+    private var lastBrakingTime: Date = Date.distantPast
+    private var lastAccelerationTime: Date = Date.distantPast
     private var lastDistractionTime: Date = Date.distantPast
 
     // Останні значення, які потрапляють у рядки CSV
@@ -165,7 +181,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         isRecording = true
 
         startTime = Date()
-        lastEventTime = Date.distantPast
+        lastBrakingTime = Date.distantPast
+        lastAccelerationTime = Date.distantPast
         lastDistractionTime = Date.distantPast
         calibration = nil
         recordedSamples = 0
@@ -176,7 +193,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
         // Raw_Y - сире поздовжнє прискорення до фільтра, Ax/Ay/Az - прискорення
         // користувача в осях телефона, Tilt_deg - відхилення нахилу від калібрування
-        csvData = ["Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg"]
+        csvData = ["Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg,Score"]
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
@@ -212,12 +229,20 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         motionManager.stopDeviceMotionUpdates()
         locationManager.stopUpdatingLocation()
 
-        let saveResult = saveCSV()
-        if let reason = reason {
-            showMessage(reason + "\n" + saveResult)
+        let summary: String
+        if recordedSamples > 0 {
+            let safetyClass = SafetyClass.classify(safetyScore)
+            summary = "Safety Score: \(safetyScore) (\(safetyClass.label))\n"
+                + "Маневри: \(hardBrakingCount + hardAccelerationCount), відволікання: \(distractionScore / Self.distractionPenalty)"
         } else {
-            showMessage(saveResult)
+            summary = ""
         }
+
+        let saveResult = saveCSV()
+        let fullMessage = [reason, summary.isEmpty ? nil : summary, saveResult]
+            .compactMap { $0 }
+            .joined(separator: "\n")
+        showMessage(fullMessage)
     }
 
     // Ручне перекалібрування (кнопка в інтерфейсі). Дозволене лише коли авто
@@ -374,17 +399,18 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private func detectManeuvers(currentY: Double) -> String {
         let now = Date()
-        guard now.timeIntervalSince(lastEventTime) >= Self.maneuverCooldown else { return "" }
 
-        if currentY < -Self.maneuverThreshold {
+        if currentY < -Self.maneuverThreshold,
+           now.timeIntervalSince(lastBrakingTime) >= Self.maneuverCooldown {
             hardBrakingCount += 1
             triggerHapticFeedback(style: .error)
-            lastEventTime = now
+            lastBrakingTime = now
             return "HardBraking"
-        } else if currentY > Self.maneuverThreshold {
+        } else if currentY > Self.maneuverThreshold,
+                  now.timeIntervalSince(lastAccelerationTime) >= Self.maneuverCooldown {
             hardAccelerationCount += 1
             triggerHapticFeedback(style: .error)
-            lastEventTime = now
+            lastAccelerationTime = now
             return "HardAcceleration"
         }
         return ""
@@ -405,7 +431,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         let timestamp = Date().timeIntervalSince(startTime)
         let safeState = phoneState.replacingOccurrences(of: ",", with: "")
         let a = lastUserAcceleration
-        csvData.append("\(timestamp),\(currentGForceY),\(safeState),\(event),\(lastRawLongitudinal),\(a.x),\(a.y),\(a.z),\(lastTiltDegrees)")
+        csvData.append("\(timestamp),\(currentGForceY),\(safeState),\(event),\(lastRawLongitudinal),\(a.x),\(a.y),\(a.z),\(lastTiltDegrees),\(safetyScore)")
     }
 
     private func triggerHapticFeedback(style: UINotificationFeedbackGenerator.FeedbackType) {

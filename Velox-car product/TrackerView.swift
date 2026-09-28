@@ -49,6 +49,10 @@ struct TrackerView: View {
                     .padding(.horizontal)
             }
             
+            // Підсумкова оцінка безпеки поїздки
+            SafetyScoreCard(score: sensorManager.safetyScore)
+                .padding(.horizontal)
+
             // Штрафні бали (Відволікання)
             EventCard(title: "Штраф: Відволікання", count: sensorManager.distractionScore, color: .purple)
                 .padding(.horizontal)
@@ -150,6 +154,40 @@ struct TrackerView: View {
 }
 
 // Компонент для красивого відображення подій
+// Велика картка з підсумковою оцінкою Safety Score та її класифікацією
+struct SafetyScoreCard: View {
+    var score: Int
+
+    private var safetyClass: SafetyClass {
+        SafetyClass.classify(score)
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text("Safety Score")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+
+            Text("\(score)")
+                .font(.system(size: 56, weight: .bold, design: .rounded))
+                .foregroundColor(safetyClass.color)
+                // Моноширинні цифри, щоб зміна 99 -> 100 не "стрибала" по ширині
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(.easeInOut(duration: 0.3), value: score)
+
+            Text("\(safetyClass.emoji) \(safetyClass.label)")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+        .background(Color(UIColor.secondarySystemBackground))
+        .cornerRadius(15)
+    }
+}
+
 struct EventCard: View {
     var title: String
     var count: Int
