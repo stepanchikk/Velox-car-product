@@ -22,33 +22,21 @@ enum SessionState: Equatable {
     }
 }
 
+/// Керуючий клас сесії запису. Отримує дані від сенсорів і системи, передає їх
+/// спеціалізованим компонентам і публікує стан для інтерфейсу:
+/// - OrientationCalibrator - калібрування орієнтації (OrientationCalibrator.swift);
+/// - LowPassFilter, ManeuverDetector, DistractionPolicy, OrientationChangeDetector
+///   - обробка сигналу і виявлення подій (EventDetectors.swift);
+/// - SafetyScoreCalculator - модель штрафів (SafetyScore.swift);
+/// - TripCSVWriter - запис поїздки у файл (TripCSVWriter.swift).
 class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let motionManager = CMMotionManager()
     private let locationManager = CLLocationManager()
 
-    // Єдина константа порогу перевантаження
+    // Поріг перевантаження (також використовується в TrackerView для підсвічування)
     static let maneuverThreshold: Double = 0.4
     // Коефіцієнт Low-Pass фільтра
     static let filterAlpha: Double = 0.2
-
-    // Пауза між двома зафіксованими маневрами (окремо для гальмування і
-    // розгону, щоб один не "з'їдав" паузу для іншого - якщо гальмування і
-    // розгін трапляються з різницею менше cooldown, обидва мають зарахуватись)
-    private static let maneuverCooldown: TimeInterval = 3.0
-    // Скільки секунд після старту ігноруємо втрату фокусу
-    private static let distractionGracePeriod: TimeInterval = 3.0
-    // Мінімальний інтервал між двома штрафами за відволікання
-    private static let distractionCooldown: TimeInterval = 1.5
-    private static let distractionPenalty: Int = 5
-
-    // Safety Score: 100 балів базово, штраф за кожен маневр і кожен факт
-    // відволікання (README: -2 за маневр, -5 за відволікання)
-    private static let maneuverPenalty: Int = 2
-
-    // Автоматичне перекалібрування: на скільки градусів має змінитись нахил
-    // телефона і як довго (секунд) ця зміна має тривати
-    private static let recalibrationAngle: Double = 30.0
-    private static let recalibrationHold: TimeInterval = 2.0
     // Ручне перекалібрування дозволене лише "майже на стоянці" (безпека:
     // не заохочуємо водія натискати кнопки під час руху)
     private static let manualRecalibrationMaxSpeed: Double = 2.0  // м/с (~7 км/год)
@@ -68,43 +56,32 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var distractionCount: Int = 0
     @Published var phoneState: SessionState = .idle
 
-    // Обчислюється з лічильників вище, тому завжди узгоджений з ними і
-    // автоматично скидається разом з resetData()
+    // Обчислюється з лічильників, тому завжди узгоджений з ними
     var safetyScore: Int {
-        let maneuvers = hardBrakingCount + hardAccelerationCount
-        let penalty = Self.maneuverPenalty * maneuvers + Self.distractionPenalty * distractionCount
-        return max(0, 100 - penalty)
+        SafetyScoreCalculator.score(maneuvers: hardBrakingCount + hardAccelerationCount,
+                                    distractions: distractionCount)
     }
 
     // Повідомлення для користувача (помилки та підтвердження)
     @Published var showAlert = false
     @Published var alertMessage = ""
 
+    // Компоненти
     private let calibrator = OrientationCalibrator()
     private var calibration: CalibrationResult?
-    private var orientationChangedSince: TimeInterval?
+    private var filter = LowPassFilter(alpha: SensorManager.filterAlpha)
+    private var maneuverDetector = ManeuverDetector(threshold: SensorManager.maneuverThreshold)
+    private var distractionPolicy = DistractionPolicy()
+    private var orientationDetector = OrientationChangeDetector()
+    private let csvWriter = TripCSVWriter()
+
     private var forwardPhaseLogged = false
     private var locationAuthorized = false
-
-    // Моменти останніх подій у секундах сесії (див. sessionTime)
-    private var lastBrakingTime: TimeInterval = -.infinity
-    private var lastAccelerationTime: TimeInterval = -.infinity
-    private var lastDistractionTime: TimeInterval = -.infinity
 
     // Останні значення, які потрапляють у рядки CSV
     private var lastRawLongitudinal: Double = 0.0
     private var lastUserAcceleration: Vector3 = Vector3.zero
-    private var lastTiltDegrees: Double = 0.0
 
-    // Запис CSV: рядки накопичуються в буфері і дописуються у файл частинами,
-    // тому при аварійному завершенні втрачається не більше ~10 с поїздки
-    private static let csvHeader = "Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg,Score,Speed_mps"
-    private static let flushEveryRows = 100   // ~10 с при 10 Гц
-    private var pendingRows: [String] = []
-    private var fileHandle: FileHandle?
-    private var fileURL: URL?
-    private var recordedSamples: Int = 0
-    private var fileName: String = ""
     // Єдиний годинник сесії: секунди від натискання «Старт».
     // CoreMotion рахує час від увімкнення пристрою (як systemUptime), а GPS дає
     // настінний час (Date), тому фіксуємо обидва моменти старту одночасно.
@@ -141,7 +118,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.stopUpdatingLocation()
         // Якщо об'єкт знищується посеред запису, зберігаємо вже записане
         if isRecording {
-            _ = finishCSV()
+            _ = csvWriter.finish()
         }
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = false
@@ -203,10 +180,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         // Під час калібрування штрафів немає
         guard isRecording, !isCalibrating else { return }
         let now = sessionTime()
-
-        guard now > Self.distractionGracePeriod,
-              now - lastDistractionTime > Self.distractionCooldown else { return }
-        lastDistractionTime = now
+        guard distractionPolicy.register(at: now) else { return }
 
         distractionCount += 1
         phoneState = .distracted
@@ -218,7 +192,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     @objc private func appEnteredBackground() {
         guard isRecording else { return }
-        if let error = flushCSV() {
+        if let error = csvWriter.flush() {
             stopRecording(reason: error)
         }
     }
@@ -246,8 +220,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        fileName = "Velox_Data_\(formatter.string(from: Date())).csv"
-        if let error = openCSV() {
+        if let error = csvWriter.open(fileName: "Velox_Data_\(formatter.string(from: Date())).csv") {
             showMessage(error)
             return
         }
@@ -259,14 +232,12 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
         startTime = Date()
         startUptime = ProcessInfo.processInfo.systemUptime
-        lastBrakingTime = -.infinity
-        lastAccelerationTime = -.infinity
-        lastDistractionTime = -.infinity
+        maneuverDetector.reset()
+        distractionPolicy.reset()
+        orientationDetector.reset()
         calibration = nil
-        recordedSamples = 0
         lastRawLongitudinal = 0.0
         lastUserAcceleration = Vector3.zero
-        lastTiltDegrees = 0.0
         lastKnownSpeed = 0.0
 
         if locationAuthorized {
@@ -301,7 +272,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         UIApplication.shared.isIdleTimerDisabled = false
 
         let summary: String
-        if recordedSamples > 0 {
+        if csvWriter.recordedSamples > 0 {
             let safetyClass = SafetyClass.classify(safetyScore)
             summary = "Safety Score: \(safetyScore) (\(safetyClass.label))\n"
                 + "Маневри: \(hardBrakingCount + hardAccelerationCount), відволікання: \(distractionCount)"
@@ -309,7 +280,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             summary = ""
         }
 
-        let saveResult = finishCSV()
+        let saveResult = csvWriter.finish()
         let fullMessage = [reason, summary.isEmpty ? nil : summary, saveResult]
             .compactMap { $0 }
             .joined(separator: "\n")
@@ -326,21 +297,21 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     // Кнопку варто вимикати під час руху: перекалібрування вимагає їхати
     // (фаза GPS), а взаємодія з телефоном на ходу суперечить самій меті
-    // застосунку. Автоматичне перекалібрування (нижче) працює без цього.
+    // застосунку. Автоматичне перекалібрування працює без цього.
     var canManuallyRecalibrate: Bool {
         lastKnownSpeed < Self.manualRecalibrationMaxSpeed
     }
 
-    // Скидання не руйнує CSV, поки триває запис
+    // Скидання лічильників; файл поїздки під час запису не зачіпається
     func resetData() {
         hardBrakingCount = 0
         hardAccelerationCount = 0
         distractionCount = 0
+        filter.reset()
         currentGForceY = 0.0
 
         if !isRecording {
             phoneState = .idle
-            pendingRows.removeAll()
         }
     }
 
@@ -351,7 +322,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         forwardPhaseLogged = false
         isCalibrating = true
         calibrationProgress = 0.0
-        orientationChangedSince = nil
+        orientationDetector.resetTimer()
         phoneState = .calibrating
         calibrationInfo = "Тримайте телефон нерухомо"
         appendEventRow(event: event)
@@ -382,9 +353,9 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         isCalibrating = false
         calibrationProgress = 1.0
         // Осі змінились, тому фільтр починає з нуля
+        filter.reset()
         currentGForceY = 0.0
-        lastTiltDegrees = 0.0
-        orientationChangedSince = nil
+        orientationDetector.reset()
         phoneState = .recording
 
         switch result.forwardSource {
@@ -398,25 +369,6 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
 
         triggerHapticFeedback(style: .success)
-    }
-
-    // true, якщо нахил телефона суттєво змінився і це триває достатньо довго
-    private func orientationChanged(gravity: Vector3,
-                                    time: TimeInterval,
-                                    calibration: CalibrationResult) -> Bool {
-        let angle = OrientationCalibrator.angleDegrees(-gravity, calibration.up)
-        lastTiltDegrees = angle
-
-        guard angle > Self.recalibrationAngle else {
-            orientationChangedSince = nil
-            return false
-        }
-
-        if let since = orientationChangedSince {
-            return time - since >= Self.recalibrationHold
-        }
-        orientationChangedSince = time
-        return false
     }
 
     // MARK: - Обробка даних
@@ -454,7 +406,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard let calibration = calibration else { return }
 
         // Кардинальна зміна положення телефона: калібруємо заново
-        if orientationChanged(gravity: gravity, time: time, calibration: calibration) {
+        if orientationDetector.update(gravity: gravity, calibratedUp: calibration.up, time: time) {
             triggerHapticFeedback(style: .warning)
             beginCalibration(event: "CalibrationStart_Auto")
             return
@@ -464,116 +416,51 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         let raw = calibration.longitudinal(userAcceleration)
         lastRawLongitudinal = raw
         lastUserAcceleration = userAcceleration
-        currentGForceY = Self.filterAlpha * raw + (1.0 - Self.filterAlpha) * currentGForceY
+        currentGForceY = filter.process(raw)
 
-        let event = detectManeuvers(currentY: currentGForceY, time: time)
-        appendMotionRow(event: event, time: time)
-    }
-
-    private func detectManeuvers(currentY: Double, time now: TimeInterval) -> String {
-
-        if currentY < -Self.maneuverThreshold,
-           now - lastBrakingTime >= Self.maneuverCooldown {
-            hardBrakingCount += 1
+        var event = ""
+        if let maneuver = maneuverDetector.detect(filtered: currentGForceY, at: time) {
+            switch maneuver {
+            case .hardBraking: hardBrakingCount += 1
+            case .hardAcceleration: hardAccelerationCount += 1
+            }
             triggerHapticFeedback(style: .error)
-            lastBrakingTime = now
-            return "HardBraking"
-        } else if currentY > Self.maneuverThreshold,
-                  now - lastAccelerationTime >= Self.maneuverCooldown {
-            hardAccelerationCount += 1
-            triggerHapticFeedback(style: .error)
-            lastAccelerationTime = now
-            return "HardAcceleration"
+            event = maneuver.eventCode
         }
-        return ""
+        appendRow(event: event, time: time, isSample: true)
     }
 
-    // Рядок із виміром (враховується при збереженні)
-    private func appendMotionRow(event: String, time: TimeInterval) {
-        recordedSamples += 1
-        writeRow(event: event, time: time)
-    }
+    // MARK: - Рядки CSV
 
     // Рядок лише з подією (Distraction, Calibration...): повторює останні значення
     private func appendEventRow(event: String, time: TimeInterval? = nil) {
-        writeRow(event: event, time: time ?? sessionTime())
+        appendRow(event: event, time: time ?? sessionTime(), isSample: false)
     }
 
-    private func writeRow(event: String, time timestamp: TimeInterval) {
-        let safeState = phoneState.title.replacingOccurrences(of: ",", with: "")
-        let a = lastUserAcceleration
-        pendingRows.append("\(timestamp),\(currentGForceY),\(safeState),\(event),\(lastRawLongitudinal),\(a.x),\(a.y),\(a.z),\(lastTiltDegrees),\(safetyScore),\(lastKnownSpeed)")
-
-        if pendingRows.count >= Self.flushEveryRows, let error = flushCSV() {
+    private func appendRow(event: String, time: TimeInterval, isSample: Bool) {
+        let row = TelemetryRow(time: time,
+                               filtered: currentGForceY,
+                               state: phoneState.title,
+                               event: event,
+                               raw: lastRawLongitudinal,
+                               userAcceleration: lastUserAcceleration,
+                               tiltDegrees: orientationDetector.lastAngle,
+                               score: safetyScore,
+                               speed: lastKnownSpeed)
+        if let error = csvWriter.append(row, isSample: isSample) {
             stopRecording(reason: error)
         }
     }
+
+    // MARK: - Повідомлення
 
     private func triggerHapticFeedback(style: UINotificationFeedbackGenerator.FeedbackType) {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(style)
     }
 
-    // MARK: - Збереження
-
     private func showMessage(_ text: String) {
         alertMessage = text
         showAlert = true
-    }
-
-    // Створює файл із заголовком і відкриває його для дописування.
-    // Повертає текст помилки або nil.
-    private func openCSV() -> String? {
-        guard let documentDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return "Не вдалося знайти папку для збереження файлу."
-        }
-        let url = documentDirectory.appendingPathComponent(fileName)
-        do {
-            try (Self.csvHeader + "\n").write(to: url, atomically: true, encoding: .utf8)
-            let handle = try FileHandle(forWritingTo: url)
-            _ = try handle.seekToEnd()
-            fileHandle = handle
-            fileURL = url
-            pendingRows.removeAll()
-            return nil
-        } catch {
-            return "Не вдалося створити файл поїздки: \(error.localizedDescription)"
-        }
-    }
-
-    // Дописує накопичені рядки у файл. Повертає текст помилки або nil.
-    @discardableResult
-    private func flushCSV() -> String? {
-        guard !pendingRows.isEmpty, let handle = fileHandle else { return nil }
-        let chunk = pendingRows.joined(separator: "\n") + "\n"
-        pendingRows.removeAll(keepingCapacity: true)
-        do {
-            try handle.write(contentsOf: Data(chunk.utf8))
-            return nil
-        } catch {
-            return "Помилка запису файлу: \(error.localizedDescription)"
-        }
-    }
-
-    // Дописує залишок, закриває файл і повертає текст результату для користувача
-    private func finishCSV() -> String {
-        let flushError = flushCSV()
-        try? fileHandle?.close()
-        fileHandle = nil
-
-        guard let url = fileURL else {
-            return "Файл поїздки не було створено."
-        }
-        fileURL = nil
-
-        // Жодного виміру (запис зупинено під час калібрування): файл не потрібен
-        if recordedSamples == 0 {
-            try? FileManager.default.removeItem(at: url)
-            return "Даних для збереження немає, файл не створено."
-        }
-        if let flushError = flushError {
-            return flushError
-        }
-        return "Дані поїздки збережено: \(fileName)"
     }
 }

@@ -42,3 +42,14 @@ enum SafetyClass {
         }
     }
 }
+
+// Модель штрафів Safety Score: 100 балів, мінус 2 за кожен маневр і мінус 5
+// за кожне відволікання, не менше 0 (README, пояснювальна записка, п. 1.3.4)
+enum SafetyScoreCalculator {
+    static let maneuverPenalty = 2
+    static let distractionPenalty = 5
+
+    static func score(maneuvers: Int, distractions: Int) -> Int {
+        max(0, 100 - maneuverPenalty * maneuvers - distractionPenalty * distractions)
+    }
+}
