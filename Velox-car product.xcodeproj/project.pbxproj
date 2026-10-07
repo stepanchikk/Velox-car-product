@@ -10,9 +10,20 @@
 		FD20040F30548A4200C62B37 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = FD20040E30548A4200C62B37 /* README.md */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		FD7E27E5307700F900304D46 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FD9DAC78305349500025AF32 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FD9DAC7F305349500025AF32;
+			remoteInfo = "Velox-car product";
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		FD20040E30548A4200C62B37 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		FD6EB087305D22E200F1B110 /* analyzer.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = analyzer.py; sourceTree = "<group>"; };
+		FD7E27E1307700F900304D46 /* Velox-car productTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Velox-car productTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD810F2B306B007F005AAC22 /* distribution.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = distribution.png; sourceTree = "<group>"; };
 		FD810F2C306B007F005AAC22 /* summary.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = summary.csv; sourceTree = "<group>"; };
 		FD810F2D306B007F005AAC22 /* threshold_sensitivity.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = threshold_sensitivity.png; sourceTree = "<group>"; };
@@ -27,6 +38,11 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		FD7E27E2307700F900304D46 /* Velox-car productTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Velox-car productTests";
+			sourceTree = "<group>";
+		};
 		FD9DAC82305349500025AF32 /* Velox-car product */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "Velox-car product";
@@ -35,6 +51,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		FD7E27DE307700F900304D46 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FD9DAC7D305349500025AF32 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -77,6 +100,7 @@
 				FD6EB089305D22E200F1B110 /* Analytics */,
 				FD20040E30548A4200C62B37 /* README.md */,
 				FD9DAC82305349500025AF32 /* Velox-car product */,
+				FD7E27E2307700F900304D46 /* Velox-car productTests */,
 				FD9DAC81305349500025AF32 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -85,6 +109,7 @@
 			isa = PBXGroup;
 			children = (
 				FD9DAC80305349500025AF32 /* Velox-car product.app */,
+				FD7E27E1307700F900304D46 /* Velox-car productTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -92,6 +117,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		FD7E27E0307700F900304D46 /* Velox-car productTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FD7E27E7307700F900304D46 /* Build configuration list for PBXNativeTarget "Velox-car productTests" */;
+			buildPhases = (
+				FD7E27DD307700F900304D46 /* Sources */,
+				FD7E27DE307700F900304D46 /* Frameworks */,
+				FD7E27DF307700F900304D46 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FD7E27E6307700F900304D46 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				FD7E27E2307700F900304D46 /* Velox-car productTests */,
+			);
+			name = "Velox-car productTests";
+			packageProductDependencies = (
+			);
+			productName = "Velox-car productTests";
+			productReference = FD7E27E1307700F900304D46 /* Velox-car productTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		FD9DAC7F305349500025AF32 /* Velox-car product */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = FD9DAC8B305349520025AF32 /* Build configuration list for PBXNativeTarget "Velox-car product" */;
@@ -121,9 +169,13 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2660;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					FD7E27E0307700F900304D46 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = FD9DAC7F305349500025AF32;
+					};
 					FD9DAC7F305349500025AF32 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -144,11 +196,19 @@
 			projectRoot = "";
 			targets = (
 				FD9DAC7F305349500025AF32 /* Velox-car product */,
+				FD7E27E0307700F900304D46 /* Velox-car productTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		FD7E27DF307700F900304D46 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FD9DAC7E305349500025AF32 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -160,6 +220,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		FD7E27DD307700F900304D46 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FD9DAC7C305349500025AF32 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -169,7 +236,67 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		FD7E27E6307700F900304D46 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FD9DAC7F305349500025AF32 /* Velox-car product */;
+			targetProxy = FD7E27E5307700F900304D46 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		FD7E27E8307700F900304D46 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KPLB4FZ4QQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.stepanshudrovsky.Velox-car-productTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Velox-car product.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Velox-car product";
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Debug;
+		};
+		FD7E27E9307700F900304D46 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KPLB4FZ4QQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.stepanshudrovsky.Velox-car-productTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Velox-car product.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Velox-car product";
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Release;
+		};
 		FD9DAC89305349520025AF32 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -370,6 +497,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		FD7E27E7307700F900304D46 /* Build configuration list for PBXNativeTarget "Velox-car productTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FD7E27E8307700F900304D46 /* Debug */,
+				FD7E27E9307700F900304D46 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		FD9DAC7B305349500025AF32 /* Build configuration list for PBXProject "Velox-car product" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Один рядок CSV поїздки (порядок колонок відповідає TripCSVWriter.header)
-struct TelemetryRow {
+nonisolated struct TelemetryRow {
     let time: TimeInterval          // секунди від «Старт»
     let filtered: Double            // Filtered_Y, G
     let state: String               // State
@@ -22,7 +22,7 @@ struct TelemetryRow {
 /// Запис поїздки у CSV. Файл із заголовком створюється на старті, рядки
 /// накопичуються в буфері й дописуються частинами, тому при аварійному
 /// завершенні застосунку втрачається не більше flushEveryRows останніх рядків.
-final class TripCSVWriter {
+nonisolated final class TripCSVWriter {
     static let header = "Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg,Score,Speed_mps"
 
     let flushEveryRows: Int

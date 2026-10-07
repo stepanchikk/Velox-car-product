@@ -3,11 +3,14 @@ import Foundation
 // Чиста логіка обробки сигналу і виявлення подій, винесена з SensorManager.
 // Жодних залежностей від CoreMotion, UIKit чи часу пристрою: усе отримується
 // через параметри, тому ці типи можна перевіряти юніт-тестами на синтетичних даних.
+// Позначка nonisolated: проєкт за замовчуванням прив'язує всі типи до головного
+// потоку (Default Actor Isolation = MainActor), а чистій логіці це не потрібно.
+// Без неї тести отримують попередження про ізольовану відповідність Equatable.
 
 // MARK: - Low-Pass фільтр
 
 /// Експоненційний фільтр низьких частот: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
-struct LowPassFilter {
+nonisolated struct LowPassFilter {
     let alpha: Double
     private(set) var value: Double = 0.0
 
@@ -28,7 +31,7 @@ struct LowPassFilter {
 
 // MARK: - Небезпечні маневри
 
-enum Maneuver {
+nonisolated enum Maneuver {
     case hardBraking
     case hardAcceleration
 
@@ -43,7 +46,7 @@ enum Maneuver {
 
 /// Поріг перевантаження + окрема пауза для кожного типу маневру, щоб
 /// гальмування одразу після розгону (чи навпаки) не губилось
-struct ManeuverDetector {
+nonisolated struct ManeuverDetector {
     let threshold: Double
     let cooldown: TimeInterval
     private var lastBrakingTime: TimeInterval = -.infinity
@@ -76,7 +79,7 @@ struct ManeuverDetector {
 // MARK: - Anti-Fraud
 
 /// Правила, коли втрату активності застосунку зараховувати як відволікання
-struct DistractionPolicy {
+nonisolated struct DistractionPolicy {
     // Скільки секунд після старту ігноруємо (системні вікна, натискання «Старт»)
     let gracePeriod: TimeInterval
     // Мінімальний інтервал між двома штрафами (шторка, Центр керування)
@@ -103,7 +106,7 @@ struct DistractionPolicy {
 // MARK: - Зміна положення телефона
 
 /// Виявляє кардинальну зміну нахилу телефона відносно калібрування
-struct OrientationChangeDetector {
+nonisolated struct OrientationChangeDetector {
     let angleThreshold: Double      // градуси
     let holdTime: TimeInterval      // скільки секунд зміна має тривати
     private var exceededSince: TimeInterval?

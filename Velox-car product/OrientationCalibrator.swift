@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Вектор у системі координат пристрою
 
-struct Vector3 {
+nonisolated struct Vector3 {
     var x: Double
     var y: Double
     var z: Double
@@ -49,8 +49,8 @@ struct Vector3 {
 
 // MARK: - Результат калібрування
 
-struct CalibrationResult {
-    enum ForwardSource {
+nonisolated struct CalibrationResult {
+    nonisolated enum ForwardSource {
         case gps
         // GPS недоступний: припущення "екраном вгору, верхньою частиною вперед"
         case fallbackFlatMount
@@ -70,7 +70,7 @@ struct CalibrationResult {
     }
 }
 
-enum CalibrationOutcome {
+nonisolated enum CalibrationOutcome {
     case calibratingUp(Double)         // прогрес 0...1: тримаємо телефон нерухомо
     case calibratingForward(Double)    // прогрес 0...1: їдемо, щоб визначити напрям руху
     case finished(CalibrationResult)
@@ -91,7 +91,7 @@ enum CalibrationOutcome {
 /// гальмування" за 8-10 с і реалістичному шумі GPS (похибка швидкості
 /// 0.25 м/с) медіанна похибка кута становить 1-3 градуси, а поріг
 /// goodEnergyThreshold дає похибку <10 градусів у 99% випадків.
-final class ForwardCalibrator {
+nonisolated final class ForwardCalibrator {
 
     // Поріг накопиченої "енергії" (сума квадратів прискорень GPS, (м/с^2)^2),
     // після якого оцінка вважається надійною.
@@ -190,7 +190,7 @@ final class ForwardCalibrator {
 // силою тяжіння (без обмежень на орієнтацію), фаза 2 - напрям руху за GPS.
 // Якщо доступу до геолокації немає, використовується запасний варіант:
 // припущення, що телефон лежить екраном вгору, верхньою частиною вперед.
-final class OrientationCalibrator {
+nonisolated final class OrientationCalibrator {
 
     // 20 вимірів при 10 Гц = 2 секунди спокою
     static let requiredStableSamples = 20
@@ -199,7 +199,7 @@ final class OrientationCalibrator {
     static let upTimeout: TimeInterval = 8.0
     private static let maxSampleGap: TimeInterval = 1.0
 
-    private enum Phase { case up, forward }
+    nonisolated private enum Phase { case up, forward }
     private var phase: Phase = .up
 
     private var stableGravity: [Vector3] = []

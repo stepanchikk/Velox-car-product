@@ -2,7 +2,7 @@ import SwiftUI
 
 // Класифікація підсумкової оцінки Safety Score.
 // Межі відповідають README: 90-100 безпечно, 75-89 середньо, менше 75 небезпечно.
-enum SafetyClass {
+nonisolated enum SafetyClass {
     case safe
     case medium
     case dangerous
@@ -45,7 +45,7 @@ enum SafetyClass {
 
 // Модель штрафів Safety Score: 100 балів, мінус 2 за кожен маневр і мінус 5
 // за кожне відволікання, не менше 0 (README, пояснювальна записка, п. 1.3.4)
-enum SafetyScoreCalculator {
+nonisolated enum SafetyScoreCalculator {
     static let maneuverPenalty = 2
     static let distractionPenalty = 5
 
