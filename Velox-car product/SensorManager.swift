@@ -69,9 +69,10 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var forwardPhaseLogged = false
     private var locationAuthorized = false
 
-    private var lastBrakingTime: Date = Date.distantPast
-    private var lastAccelerationTime: Date = Date.distantPast
-    private var lastDistractionTime: Date = Date.distantPast
+    // Моменти останніх подій у секундах сесії (див. sessionTime)
+    private var lastBrakingTime: TimeInterval = -.infinity
+    private var lastAccelerationTime: TimeInterval = -.infinity
+    private var lastDistractionTime: TimeInterval = -.infinity
 
     // Останні значення, які потрапляють у рядки CSV
     private var lastRawLongitudinal: Double = 0.0
@@ -87,7 +88,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var fileURL: URL?
     private var recordedSamples: Int = 0
     private var fileName: String = ""
+    // Єдиний годинник сесії: секунди від натискання «Старт».
+    // CoreMotion рахує час від увімкнення пристрою (як systemUptime), а GPS дає
+    // настінний час (Date), тому фіксуємо обидва моменти старту одночасно.
     private var startTime: Date = Date()
+    private var startUptime: TimeInterval = 0
 
     override init() {
         super.init()
@@ -139,14 +144,34 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last, isRecording else { return }
 
+        // Перше оновлення може бути старою закешованою позицією: пропускаємо її
+        let time = sessionTime(of: location)
+        guard time > -1.0 else { return }
+
         let speed = location.speed
         lastKnownSpeed = max(speed, 0)
 
         guard isCalibrating else { return }
-        let time = Date().timeIntervalSince(startTime)
         if let outcome = calibrator.feedLocation(speed: speed, speedAccuracy: location.speedAccuracy, time: time) {
             apply(outcome)
         }
+    }
+
+    // MARK: - Час сесії
+
+    // Поточний момент (для подій без власної мітки часу: сповіщення, кнопки)
+    private func sessionTime() -> TimeInterval {
+        ProcessInfo.processInfo.systemUptime - startUptime
+    }
+
+    // Момент, коли сенсор фактично зробив вимір (а не коли ми його обробили)
+    private func sessionTime(of motion: CMDeviceMotion) -> TimeInterval {
+        motion.timestamp - startUptime
+    }
+
+    // Момент визначення координат GPS
+    private func sessionTime(of location: CLLocation) -> TimeInterval {
+        location.timestamp.timeIntervalSince(startTime)
     }
 
     // MARK: - Життєвий цикл додатка (Anti-Fraud)
@@ -160,17 +185,17 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private func handleFocusLost() {
         // Під час калібрування штрафів немає
         guard isRecording, !isCalibrating else { return }
-        let now = Date()
+        let now = sessionTime()
 
-        guard now.timeIntervalSince(startTime) > Self.distractionGracePeriod,
-              now.timeIntervalSince(lastDistractionTime) > Self.distractionCooldown else { return }
+        guard now > Self.distractionGracePeriod,
+              now - lastDistractionTime > Self.distractionCooldown else { return }
         lastDistractionTime = now
 
         distractionScore += Self.distractionPenalty
         phoneState = "Відволікання!"
 
         // Пишемо подію в CSV одразу, а не чекаємо наступного виміру
-        appendEventRow(event: "Distraction")
+        appendEventRow(event: "Distraction", time: now)
         triggerHapticFeedback(style: .error)
     }
 
@@ -216,9 +241,10 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         UIApplication.shared.isIdleTimerDisabled = true
 
         startTime = Date()
-        lastBrakingTime = Date.distantPast
-        lastAccelerationTime = Date.distantPast
-        lastDistractionTime = Date.distantPast
+        startUptime = ProcessInfo.processInfo.systemUptime
+        lastBrakingTime = -.infinity
+        lastAccelerationTime = -.infinity
+        lastDistractionTime = -.infinity
         calibration = nil
         recordedSamples = 0
         lastRawLongitudinal = 0.0
@@ -397,7 +423,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
         let gravity = vector(motion.gravity)
         let userAcceleration = vector(motion.userAcceleration)
-        let time = Date().timeIntervalSince(startTime)
+        let time = sessionTime(of: motion)
 
         if isCalibrating {
             let outcome = calibrator.feedMotion(gravity: gravity,
@@ -423,21 +449,20 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastUserAcceleration = userAcceleration
         currentGForceY = Self.filterAlpha * raw + (1.0 - Self.filterAlpha) * currentGForceY
 
-        let event = detectManeuvers(currentY: currentGForceY)
-        appendMotionRow(event: event)
+        let event = detectManeuvers(currentY: currentGForceY, time: time)
+        appendMotionRow(event: event, time: time)
     }
 
-    private func detectManeuvers(currentY: Double) -> String {
-        let now = Date()
+    private func detectManeuvers(currentY: Double, time now: TimeInterval) -> String {
 
         if currentY < -Self.maneuverThreshold,
-           now.timeIntervalSince(lastBrakingTime) >= Self.maneuverCooldown {
+           now - lastBrakingTime >= Self.maneuverCooldown {
             hardBrakingCount += 1
             triggerHapticFeedback(style: .error)
             lastBrakingTime = now
             return "HardBraking"
         } else if currentY > Self.maneuverThreshold,
-                  now.timeIntervalSince(lastAccelerationTime) >= Self.maneuverCooldown {
+                  now - lastAccelerationTime >= Self.maneuverCooldown {
             hardAccelerationCount += 1
             triggerHapticFeedback(style: .error)
             lastAccelerationTime = now
@@ -447,18 +472,17 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     // Рядок із виміром (враховується при збереженні)
-    private func appendMotionRow(event: String) {
+    private func appendMotionRow(event: String, time: TimeInterval) {
         recordedSamples += 1
-        writeRow(event: event)
+        writeRow(event: event, time: time)
     }
 
     // Рядок лише з подією (Distraction, Calibration...): повторює останні значення
-    private func appendEventRow(event: String) {
-        writeRow(event: event)
+    private func appendEventRow(event: String, time: TimeInterval? = nil) {
+        writeRow(event: event, time: time ?? sessionTime())
     }
 
-    private func writeRow(event: String) {
-        let timestamp = Date().timeIntervalSince(startTime)
+    private func writeRow(event: String, time timestamp: TimeInterval) {
         let safeState = phoneState.replacingOccurrences(of: ",", with: "")
         let a = lastUserAcceleration
         pendingRows.append("\(timestamp),\(currentGForceY),\(safeState),\(event),\(lastRawLongitudinal),\(a.x),\(a.y),\(a.z),\(lastTiltDegrees),\(safetyScore),\(lastKnownSpeed)")
