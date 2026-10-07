@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct TrackerView: View {
-    @StateObject private var sensorManager = SensorManager()
+    // Об'єкт створюється в MainTabView і передається через середовище
+    @EnvironmentObject private var sensorManager: SensorManager
     
     var body: some View {
         VStack(spacing: 20) {

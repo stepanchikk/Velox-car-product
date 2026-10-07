@@ -66,6 +66,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let calibrator = OrientationCalibrator()
     private var calibration: CalibrationResult?
     private var orientationChangedSince: TimeInterval?
+    private var forwardPhaseLogged = false
     private var locationAuthorized = false
 
     private var lastBrakingTime: Date = Date.distantPast
@@ -77,8 +78,13 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var lastUserAcceleration: Vector3 = Vector3.zero
     private var lastTiltDegrees: Double = 0.0
 
-    // Змінні для запису CSV
-    private var csvData: [String] = []
+    // Запис CSV: рядки накопичуються в буфері і дописуються у файл частинами,
+    // тому при аварійному завершенні втрачається не більше ~10 с поїздки
+    private static let csvHeader = "Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg,Score,Speed_mps"
+    private static let flushEveryRows = 100   // ~10 с при 10 Гц
+    private var pendingRows: [String] = []
+    private var fileHandle: FileHandle?
+    private var fileURL: URL?
     private var recordedSamples: Int = 0
     private var fileName: String = ""
     private var startTime: Date = Date()
@@ -91,6 +97,9 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
         // Повернення в додаток
         NotificationCenter.default.addObserver(self, selector: #selector(appGainedFocus), name: UIApplication.didBecomeActiveNotification, object: nil)
+
+        // Застосунок пішов у фон: iOS може його вивантажити, тому скидаємо буфер у файл
+        NotificationCenter.default.addObserver(self, selector: #selector(appEnteredBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
 
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
@@ -108,6 +117,13 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         NotificationCenter.default.removeObserver(self)
         motionManager.stopDeviceMotionUpdates()
         locationManager.stopUpdatingLocation()
+        // Якщо об'єкт знищується посеред запису, зберігаємо вже записане
+        if isRecording {
+            _ = finishCSV()
+        }
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
     }
 
     // MARK: - CLLocationManagerDelegate
@@ -158,6 +174,13 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         triggerHapticFeedback(style: .error)
     }
 
+    @objc private func appEnteredBackground() {
+        guard isRecording else { return }
+        if let error = flushCSV() {
+            stopRecording(reason: error)
+        }
+    }
+
     @objc private func appGainedFocus() {
         guard isRecording else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
@@ -176,9 +199,21 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             return
         }
 
-        // Спершу очищаємо дані, потім вмикаємо сесію
+        // Спершу очищаємо дані і створюємо файл, потім вмикаємо сесію
         resetData()
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        fileName = "Velox_Data_\(formatter.string(from: Date())).csv"
+        if let error = openCSV() {
+            showMessage(error)
+            return
+        }
+
         isRecording = true
+        // Телефон у тримачі ніхто не торкається: без цього iOS погасить екран,
+        // застосунок втратить активність (штраф) і перестане отримувати дані
+        UIApplication.shared.isIdleTimerDisabled = true
 
         startTime = Date()
         lastBrakingTime = Date.distantPast
@@ -190,14 +225,6 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastUserAcceleration = Vector3.zero
         lastTiltDegrees = 0.0
         lastKnownSpeed = 0.0
-
-        // Raw_Y - сире поздовжнє прискорення до фільтра, Ax/Ay/Az - прискорення
-        // користувача в осях телефона, Tilt_deg - відхилення нахилу від калібрування
-        csvData = ["Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg,Score"]
-
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        fileName = "Velox_Data_\(formatter.string(from: Date())).csv"
 
         if locationAuthorized {
             locationManager.startUpdatingLocation()
@@ -228,6 +255,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         phoneState = "Очікування"
         motionManager.stopDeviceMotionUpdates()
         locationManager.stopUpdatingLocation()
+        UIApplication.shared.isIdleTimerDisabled = false
 
         let summary: String
         if recordedSamples > 0 {
@@ -238,7 +266,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             summary = ""
         }
 
-        let saveResult = saveCSV()
+        let saveResult = finishCSV()
         let fullMessage = [reason, summary.isEmpty ? nil : summary, saveResult]
             .compactMap { $0 }
             .joined(separator: "\n")
@@ -269,7 +297,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
         if !isRecording {
             phoneState = "Очікування"
-            csvData.removeAll()
+            pendingRows.removeAll()
         }
     }
 
@@ -277,6 +305,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private func beginCalibration(event: String) {
         calibrator.reset(locationAvailable: locationAuthorized)
+        forwardPhaseLogged = false
         isCalibrating = true
         calibrationProgress = 0.0
         orientationChangedSince = nil
@@ -293,7 +322,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         case .calibratingForward(let progress):
             calibrationProgress = progress
             calibrationInfo = "Проїдьте прямо, плавно прискорюючись і гальмуючи"
-            if progress == 0 {
+            if !forwardPhaseLogged {
+                forwardPhaseLogged = true
                 appendEventRow(event: "CalibrationForwardStart")
             }
         case .finished(let result):
@@ -431,7 +461,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         let timestamp = Date().timeIntervalSince(startTime)
         let safeState = phoneState.replacingOccurrences(of: ",", with: "")
         let a = lastUserAcceleration
-        csvData.append("\(timestamp),\(currentGForceY),\(safeState),\(event),\(lastRawLongitudinal),\(a.x),\(a.y),\(a.z),\(lastTiltDegrees),\(safetyScore)")
+        pendingRows.append("\(timestamp),\(currentGForceY),\(safeState),\(event),\(lastRawLongitudinal),\(a.x),\(a.y),\(a.z),\(lastTiltDegrees),\(safetyScore),\(lastKnownSpeed)")
+
+        if pendingRows.count >= Self.flushEveryRows, let error = flushCSV() {
+            stopRecording(reason: error)
+        }
     }
 
     private func triggerHapticFeedback(style: UINotificationFeedbackGenerator.FeedbackType) {
@@ -446,24 +480,59 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         showAlert = true
     }
 
-    // Повертає текст результату для показу користувачу
-    private func saveCSV() -> String {
-        // Якщо не було жодного виміру (лише події калібрування), файл не створюємо
-        guard recordedSamples > 0 else {
-            return "Даних для збереження немає, файл не створено."
-        }
-
+    // Створює файл із заголовком і відкриває його для дописування.
+    // Повертає текст помилки або nil.
+    private func openCSV() -> String? {
         guard let documentDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return "Не вдалося знайти папку для збереження файлу."
         }
-
-        let fileURL = documentDirectory.appendingPathComponent(fileName)
-        let csvString = csvData.joined(separator: "\n")
+        let url = documentDirectory.appendingPathComponent(fileName)
         do {
-            try csvString.write(to: fileURL, atomically: true, encoding: .utf8)
-            return "Дані поїздки збережено: \(fileName)"
+            try (Self.csvHeader + "\n").write(to: url, atomically: true, encoding: .utf8)
+            let handle = try FileHandle(forWritingTo: url)
+            _ = try handle.seekToEnd()
+            fileHandle = handle
+            fileURL = url
+            pendingRows.removeAll()
+            return nil
         } catch {
-            return "Помилка збереження файлу: \(error.localizedDescription)"
+            return "Не вдалося створити файл поїздки: \(error.localizedDescription)"
         }
+    }
+
+    // Дописує накопичені рядки у файл. Повертає текст помилки або nil.
+    @discardableResult
+    private func flushCSV() -> String? {
+        guard !pendingRows.isEmpty, let handle = fileHandle else { return nil }
+        let chunk = pendingRows.joined(separator: "\n") + "\n"
+        pendingRows.removeAll(keepingCapacity: true)
+        do {
+            try handle.write(contentsOf: Data(chunk.utf8))
+            return nil
+        } catch {
+            return "Помилка запису файлу: \(error.localizedDescription)"
+        }
+    }
+
+    // Дописує залишок, закриває файл і повертає текст результату для користувача
+    private func finishCSV() -> String {
+        let flushError = flushCSV()
+        try? fileHandle?.close()
+        fileHandle = nil
+
+        guard let url = fileURL else {
+            return "Файл поїздки не було створено."
+        }
+        fileURL = nil
+
+        // Жодного виміру (запис зупинено під час калібрування): файл не потрібен
+        if recordedSamples == 0 {
+            try? FileManager.default.removeItem(at: url)
+            return "Даних для збереження немає, файл не створено."
+        }
+        if let flushError = flushError {
+            return flushError
+        }
+        return "Дані поїздки збережено: \(fileName)"
     }
 }

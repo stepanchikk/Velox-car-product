@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct MainTabView: View {
+    // SensorManager живе на рівні вкладок: запис не переривається при перемиканні
+    // вкладок, а профіль знає, чи йде запис (щоб не дати вийти посеред поїздки)
+    @StateObject private var sensorManager = SensorManager()
+
     var body: some View {
         TabView {
             //старий екран з акселерометром
@@ -17,12 +21,14 @@ struct MainTabView: View {
                     Text("Профіль")
                 }
         }
+        .environmentObject(sensorManager)
     }
 }
 
 // Макет профілю
 struct ProfileView: View {
     @AppStorage("isLoggedIn") var isLoggedIn: Bool = false
+    @EnvironmentObject private var sensorManager: SensorManager
     
     var body: some View {
         VStack(spacing: 20) {
@@ -72,8 +78,18 @@ struct ProfileView: View {
                     .background(Color.red.opacity(0.1))
                     .cornerRadius(12)
             }
+            // Вихід під час запису знищив би екран трекера разом із поїздкою
+            .disabled(sensorManager.isRecording)
+            .opacity(sensorManager.isRecording ? 0.4 : 1.0)
             .padding(.horizontal, 30)
-            .padding(.bottom, 30)
+
+            if sensorManager.isRecording {
+                Text("Спочатку зупиніть запис поїздки")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer().frame(height: 30)
         }
     }
 }

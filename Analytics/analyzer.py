@@ -35,9 +35,12 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
 # ---------- Параметри, що відповідають додатку ----------
-ALPHA = 0.2            # коефіцієнт Low-Pass фільтра в SensorManager
-THRESHOLD = 0.4        # поріг маневру, G
-COOLDOWN = 3.0         # пауза між двома маневрами, с
+ALPHA = 0.2                # коефіцієнт Low-Pass фільтра в SensorManager
+THRESHOLD = 0.4            # поріг маневру, G
+COOLDOWN = 3.0              # пауза між двома маневрами одного типу, с
+G_MS2 = 9.80665             # 1 G у м/с^2
+MANEUVER_PENALTY = 2        # штраф Safety Score за маневр (README)
+DISTRACTION_PENALTY = 5     # штраф Safety Score за відволікання (README)
 
 # ---------- Параметри аналізу ----------
 ALPHAS = [0.1, 0.2, 0.3, 0.5]
@@ -77,7 +80,20 @@ def load_trip(path):
     has_raw = "Raw_Y" in df.columns
     if has_raw:
         df["Raw_Y"] = pd.to_numeric(df["Raw_Y"], errors="coerce")
-    df = df.dropna(subset=["Timestamp", "Filtered_Y"]).reset_index(drop=True)
+    has_score = "Score" in df.columns
+    if has_score:
+        df["Score"] = pd.to_numeric(df["Score"], errors="coerce")
+    has_speed = "Speed_mps" in df.columns
+    if has_speed:
+        df["Speed_mps"] = pd.to_numeric(df["Speed_mps"], errors="coerce")
+    n_before = len(df)
+    essential = ["Timestamp", "Filtered_Y"] + (["Raw_Y"] if has_raw else [])
+    df = df.dropna(subset=essential).reset_index(drop=True)
+    if len(df) < n_before:
+        # Поточна версія дописує файл частинами; при аварійному завершенні
+        # останній рядок може бути обірваний
+        print(f"  Увага: {os.path.basename(path)}: відкинуто неповних рядків: {n_before - len(df)} "
+              f"(ймовірно, запис обірвався)")
 
     if len(df) < 3:
         print(f"  Пропуск {os.path.basename(path)}: замало даних ({len(df)} рядків)")
@@ -86,6 +102,17 @@ def load_trip(path):
     # Події (для позначок на графіку) беремо з усіх рядків
     events = df[df["Event"] != ""][["Timestamp", "Event", "Filtered_Y"]].copy()
     calibration_windows = find_calibration_windows(df)
+
+    # Динаміка Safety Score (нова колонка; у старих файлах відсутня)
+    if has_score:
+        score_t = df["Timestamp"].to_numpy(dtype=float)
+        score_v = df["Score"].to_numpy(dtype=float)
+        valid = ~np.isnan(score_v)
+        score_series = (score_t[valid], score_v[valid])
+        final_score_logged = float(score_v[valid][-1]) if valid.any() else None
+    else:
+        score_series = None
+        final_score_logged = None
 
     # Нова версія додатка пише подію Distraction окремим рядком між вимірами.
     # Такий рядок повторює Filtered_Y попереднього рядка, тому його можна відсіяти,
@@ -97,6 +124,8 @@ def load_trip(path):
 
     t = motion["Timestamp"].to_numpy(dtype=float)
     y = motion["Filtered_Y"].to_numpy(dtype=float)
+
+    speed = motion["Speed_mps"].to_numpy(dtype=float) if has_speed else None
 
     if has_raw and motion["Raw_Y"].notna().all():
         raw = motion["Raw_Y"].to_numpy(dtype=float)
@@ -117,9 +146,49 @@ def load_trip(path):
         "raw_source": raw_source,
         "events": events,
         "calibration_windows": calibration_windows,
+        "score_series": score_series,
+        "final_score_logged": final_score_logged,
+        "speed": speed,
         "has_event_column": has_event_column,
         "n_extra_rows": int(np.count_nonzero(is_extra)),
     }
+
+
+def gps_check(trip, bin_s=1.0):
+    """Звірка поздовжнього прискорення з додатка з прискоренням, отриманим
+    диференціюванням швидкості GPS. Повертає None, якщо колонки Speed_mps немає.
+
+    Швидкість GPS оновлюється приблизно раз на секунду, тому обидва сигнали
+    усереднюються по інтервалах bin_s. Додатний r означає, що знак і напрям
+    калібрування правильні (розгін = додатне значення)."""
+    if trip["speed"] is None:
+        return None
+    t, speed, y = trip["t"], trip["speed"], trip["y"]
+    ok = ~np.isnan(speed)
+    if ok.sum() < 20:
+        return None
+    t, speed, y = t[ok], speed[ok], y[ok]
+
+    edges = np.arange(t[0], t[-1] + bin_s, bin_s)
+    idx = np.digitize(t, edges) - 1
+    bins = np.unique(idx)
+    bt, bv, ba = [], [], []
+    for b in bins:
+        sel = idx == b
+        bt.append(t[sel].mean())
+        bv.append(speed[sel][-1])          # остання відома швидкість в інтервалі
+        ba.append(y[sel].mean() * G_MS2)   # прискорення додатка, м/с^2
+    bt, bv, ba = np.array(bt), np.array(bv), np.array(ba)
+
+    a_gps = np.diff(bv) / np.diff(bt)
+    a_app = ba[1:]
+    good = (np.abs(a_gps) < 6.0) & (np.diff(bt) < 3 * bin_s)
+    if good.sum() < 20 or np.std(a_gps[good]) < 1e-6 or np.std(a_app[good]) < 1e-6:
+        return None
+    r = float(np.corrcoef(a_gps[good], a_app[good])[0, 1])
+    slope = float(np.polyfit(a_gps[good], a_app[good], 1)[0])
+    return {"r": r, "slope": slope, "n": int(good.sum()),
+            "t": bt[1:], "a_gps": a_gps, "a_app": a_app, "speed": bv[1:], "good": good}
 
 
 def find_calibration_windows(df):
@@ -152,19 +221,35 @@ def apply_filter(x, alpha):
 
 
 def detect_maneuvers(t, y, threshold, cooldown=COOLDOWN):
-    """Повторює логіку detectManeuvers з додатка: поріг + пауза між подіями."""
+    """Повторює логіку detectManeuvers з додатка: окрема пауза для гальмування
+    і розгону, щоб один не 'з'їдав' паузу для іншого (виправлено разом із
+    впровадженням Safety Score - раніше пауза була спільна)."""
     found = []
-    last = -np.inf
+    last_brake = -np.inf
+    last_accel = -np.inf
     for ti, yi in zip(t, y):
-        if ti - last < cooldown:
-            continue
-        if yi < -threshold:
+        if yi < -threshold and ti - last_brake >= cooldown:
             found.append((ti, "HardBraking"))
-            last = ti
-        elif yi > threshold:
+            last_brake = ti
+        elif yi > threshold and ti - last_accel >= cooldown:
             found.append((ti, "HardAcceleration"))
-            last = ti
+            last_accel = ti
     return found
+
+
+def safety_score(maneuvers, distractions, maneuver_penalty=MANEUVER_PENALTY,
+                  distraction_penalty=DISTRACTION_PENALTY):
+    """Формула з SensorManager.swift: 100 - 2*маневри - 5*відволікання, clamp на 0."""
+    penalty = maneuver_penalty * maneuvers + distraction_penalty * distractions
+    return max(0, 100 - penalty)
+
+
+def classify_score(score):
+    if score >= 90:
+        return "Безпечний"
+    if score >= 75:
+        return "Середній"
+    return "Небезпечний"
 
 
 # ======================================================================
@@ -232,6 +317,22 @@ def plot_raw_vs_filtered(trip, out_dir):
                              os.path.join(out_dir, f"{stem(trip)}_raw_vs_filtered.png"))
 
 
+ZOOM_MIN_TRIP_S = 120.0    # від якої тривалості будувати додатковий фрагмент
+ZOOM_WINDOW_S = 40.0       # довжина фрагмента
+
+
+def zoom_window(t, raw, width=ZOOM_WINDOW_S):
+    """Фрагмент довжиною width с, де сирий сигнал найбільш мінливий."""
+    step = max(1, int(round(1.0 / max(np.median(np.diff(t)), 1e-3))))   # ~1 с
+    starts = np.arange(t[0], t[-1] - width, step * 0.5 + 1e-9)
+    if len(starts) == 0:
+        return float(t[0]), float(t[-1])
+    scores = [np.std(raw[(t >= s0) & (t < s0 + width)]) if ((t >= s0) & (t < s0 + width)).sum() > 10 else 0.0
+              for s0 in starts]
+    s0 = float(starts[int(np.argmax(scores))])
+    return s0, s0 + width
+
+
 def plot_alpha_comparison(trip, out_dir):
     t, y, raw = trip["t"], trip["y"], trip["raw"]
     fig, ax = plt.subplots(figsize=(14, 6))
@@ -248,15 +349,89 @@ def plot_alpha_comparison(trip, out_dir):
 
     limit = max(0.6, 1.3 * peak)
     ax.set_ylim(-limit, limit)
-    return _finish_trip_plot(fig, ax, f"Вплив коефіцієнта alpha на згладжування: {trip['name']}",
+    full = _finish_trip_plot(fig, ax, f"Вплив коефіцієнта alpha на згладжування: {trip['name']}",
                              os.path.join(out_dir, f"{stem(trip)}_alpha_comparison.png"))
+
+    # На довгій поїздці лінії різних alpha зливаються, тому додатково
+    # будуємо фрагмент з найбільшою активністю сирого сигналу
+    if t[-1] - t[0] > ZOOM_MIN_TRIP_S:
+        window = zoom_window(t, raw)
+        fig2, ax2 = plt.subplots(figsize=(14, 6))
+        sel = (t >= window[0]) & (t <= window[1])
+        ax2.plot(*_break_gaps(t[sel], raw[sel]), color="#c8c8c8", linewidth=0.9, label="Сирий сигнал")
+        for a in ALPHAS:
+            ya = y if a == ALPHA else apply_filter(raw, a)
+            ax2.plot(*_break_gaps(t[sel], ya[sel]), linewidth=2.4 if a == ALPHA else 1.3,
+                     label=f"alpha = {a}" + (" (у додатку)" if a == ALPHA else ""))
+        _draw_threshold(ax2)
+        ax2.set_xlim(window)
+        zoom_peak = float(np.max(np.abs(raw[sel])))
+        ax2.set_ylim(-max(0.6, 1.2 * zoom_peak), max(0.6, 1.2 * zoom_peak))
+        _finish_trip_plot(fig2, ax2,
+                          f"Вплив alpha, фрагмент {window[0]:.0f}-{window[1]:.0f} с (найбільша активність): {trip['name']}",
+                          os.path.join(out_dir, f"{stem(trip)}_alpha_comparison_zoom.png"))
+        return [full, fig2]
+    return full
+
+
+def plot_gps_check(trip, check, out_dir):
+    """Швидкість GPS і порівняння прискорень: додаток проти GPS."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 7), sharex=True,
+                                   gridspec_kw={"height_ratios": [1, 2]})
+    ax1.plot(check["t"], check["speed"] * 3.6, color="tab:green", linewidth=1.5)
+    ax1.set_ylabel("Швидкість GPS, км/год")
+    ax1.grid(True, alpha=0.4)
+    ax1.set_title(f"Перевірка калібрування за GPS: {trip['name']}  "
+                  f"(r = {check['r']:.2f}, нахил = {check['slope']:.2f}, інтервалів: {check['n']})")
+
+    ax2.plot(check["t"], check["a_gps"], color="tab:green", linewidth=1.0, alpha=0.8,
+             label="Прискорення за GPS (dv/dt)")
+    ax2.plot(check["t"], check["a_app"], color="tab:blue", linewidth=1.4,
+             label="Поздовжнє прискорення додатка (відфільтроване)")
+    ax2.axhline(0, color="black", linewidth=0.6)
+    ax2.set_xlabel("Час від початку запису, с")
+    ax2.set_ylabel("Прискорення, м/с²")
+    ax2.grid(True, alpha=0.4)
+    ax2.legend(loc="upper right")
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, f"{stem(trip)}_gps_check.png"), dpi=150)
+    return fig
+
+
+def plot_score_evolution(trip, out_dir):
+    """Динаміка Safety Score протягом поїздки (лише для файлів з колонкою Score)."""
+    ts, scores = trip["score_series"]
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    ax.plot(*_break_gaps(ts, scores), color="tab:blue", linewidth=2.0, drawstyle="steps-post",
+            label="Safety Score")
+    ax.axhline(90, color="green", linestyle="--", alpha=0.5, label="90: Безпечний")
+    ax.axhline(75, color="orange", linestyle="--", alpha=0.5, label="75: Середній")
+    for w_start, w_end in trip["calibration_windows"]:
+        ax.axvspan(w_start, w_end, color="gray", alpha=0.18, label="Калібрування")
+
+    final = scores[-1] if len(scores) else 100
+    ax.set_ylim(max(0, min(70, final - 5)), 102)
+    ax.set_title(f"Динаміка Safety Score: {trip['name']} (підсумок: {int(final)}, {classify_score(int(final))})")
+    ax.set_xlabel("Час від початку запису, с")
+    ax.set_ylabel("Safety Score")
+    ax.grid(True, alpha=0.4)
+    _unique_legend(ax, loc="lower left")
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, f"{stem(trip)}_safety_score.png"), dpi=150)
+    return fig
 
 
 def sensitivity_counts(trips):
     """Кількість маневрів для кожного порога і alpha. Повертає (по файлах для ALPHA, сума по alpha)."""
     per_file = {}
+    raw_per_file = {}
     total = {a: np.zeros(len(THRESHOLDS), dtype=int) for a in ALPHAS}
     for trip in trips:
+        raw_per_file[trip["name"]] = np.array(
+            [len(detect_maneuvers(trip["t"], trip["raw"], th)) for th in THRESHOLDS])
         counts = []
         for a in ALPHAS:
             ya = trip["y"] if a == ALPHA else apply_filter(trip["raw"], a)
@@ -265,7 +440,7 @@ def sensitivity_counts(trips):
             if a == ALPHA:
                 counts = row
         per_file[trip["name"]] = counts
-    return per_file, total
+    return per_file, total, raw_per_file
 
 
 def _style_count_axis(ax, title, margin, **legend_kwargs):
@@ -274,19 +449,23 @@ def _style_count_axis(ax, title, margin, **legend_kwargs):
     ax.set_title(title)
     ax.set_xlabel("Поріг, G")
     ax.set_ylabel("Виявлено маневрів")
-    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-    ax.margins(y=margin)
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=3))
+    top = max([float(np.max(line.get_ydata())) for line in ax.get_lines()
+               if len(line.get_ydata()) > 1 and line.get_linestyle() != "--"] + [1.0])
+    ax.set_ylim(-0.04 * top, top * (1.0 + margin))   # кількість подій не буває від'ємною
     ax.grid(True, alpha=0.4)
     _unique_legend(ax, **legend_kwargs)
 
 
 def plot_threshold_sensitivity(trips, out_dir):
-    per_file, total = sensitivity_counts(trips)
+    per_file, total, raw_per_file = sensitivity_counts(trips)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5))
 
     for name, counts in per_file.items():
-        ax1.plot(THRESHOLDS, counts, marker="o", label=name)
-    _style_count_axis(ax1, f"Кількість маневрів залежно від порога (alpha={ALPHA})", 0.25, fontsize=8)
+        line, = ax1.plot(THRESHOLDS, counts, marker="o", label=f"{name} (з фільтром)")
+        ax1.plot(THRESHOLDS, raw_per_file[name], marker="x", linestyle=":", color=line.get_color(),
+                 label=f"{name} (без фільтра)")
+    _style_count_axis(ax1, f"Кількість маневрів залежно від порога (alpha={ALPHA})", 0.25, fontsize=7)
 
     for a in ALPHAS:
         ax2.plot(THRESHOLDS, total[a], marker="o", linewidth=2.2 if a == ALPHA else 1.2, label=f"alpha = {a}")
@@ -330,14 +509,24 @@ def summarize(trips):
     rows = []
     for trip in trips:
         t, y, ev = trip["t"], trip["y"], trip["events"]["Event"]
+        na = "н/д"  # у старих файлах немає колонки Event чи Score
         logged_brake = int(ev.eq("HardBraking").sum())
         logged_accel = int(ev.eq("HardAcceleration").sum())
+        logged_distract = int(ev.eq("Distraction").sum())
         sim = detect_maneuvers(t, y, THRESHOLD)
         sim_brake = sum(1 for _, k in sim if k == "HardBraking")
         sim_accel = sum(1 for _, k in sim if k == "HardAcceleration")
-        na = "н/д"  # у старих файлах немає колонки Event
-        if not trip["has_event_column"]:
-            logged_brake = logged_accel = na
+
+        if trip["has_event_column"]:
+            score_computed = safety_score(logged_brake + logged_accel, logged_distract)
+            score_computed_label = f"{score_computed} ({classify_score(score_computed)})"
+        else:
+            logged_brake = logged_accel = logged_distract = na
+            score_computed_label = na
+
+        score_logged = trip["final_score_logged"]
+        score_logged_label = f"{int(score_logged)} ({classify_score(int(score_logged))})" if score_logged is not None else na
+
         rows.append({
             "Файл": trip["name"],
             "Тривалість, с": round(float(t[-1] - t[0]), 1),
@@ -346,10 +535,13 @@ def summarize(trips):
             "Макс. гальмування, G": round(float(abs(np.min(y))), 3),
             "Гальмувань (лог)": logged_brake,
             "Розгонів (лог)": logged_accel,
-            "Відволікань (лог)": na if not trip["has_event_column"] else int(ev.eq("Distraction").sum()),
+            "Відволікань (лог)": logged_distract,
             "Гальмувань (перерахунок)": sim_brake,
             "Розгонів (перерахунок)": sim_accel,
             "Час вище порога, %": round(100.0 * float(np.mean(np.abs(y) > THRESHOLD)), 2),
+            "Safety Score (лог)": score_logged_label,
+            "Safety Score (розрахунок)": score_computed_label,
+            "Кореляція з GPS (r)": round(trip["gps"]["r"], 2) if trip.get("gps") else na,
             "Сирий сигнал": trip["raw_source"],
         })
     return pd.DataFrame(rows)
@@ -367,9 +559,19 @@ def check_consistency(summary):
         print("Перевірка: події в CSV збігаються з перерахунком (поріг, пауза).")
     else:
         print("Перевірка: є розбіжності між подіями в CSV і перерахунком "
-              "(можливо, змінювався поріг у додатку або паузи виміряні по годиннику):")
+              "(можливо, змінювався поріг у додатку, або файл записаний до "
+              "виправлення роздільної паузи гальмування/розгону):")
         print(bad[["Файл", "Гальмувань (лог)", "Гальмувань (перерахунок)",
                    "Розгонів (лог)", "Розгонів (перерахунок)"]].to_string(index=False))
+
+    has_score = comparable[comparable["Safety Score (лог)"] != "н/д"]
+    if not has_score.empty:
+        score_bad = has_score[has_score["Safety Score (лог)"] != has_score["Safety Score (розрахунок)"]]
+        if score_bad.empty:
+            print("Перевірка: Safety Score у CSV збігається з розрахунком за формулою.")
+        else:
+            print("Перевірка: Safety Score у CSV відрізняється від розрахунку за формулою:")
+            print(score_bad[["Файл", "Safety Score (лог)", "Safety Score (розрахунок)"]].to_string(index=False))
 
 
 # ======================================================================
@@ -408,7 +610,16 @@ def main():
         print(f"  -> Макс. розгін: {np.max(trip['y']):.3f} G")
         print(f"  -> Макс. гальмування (модуль): {abs(np.min(trip['y'])):.3f} G\n")
 
-        figs = [plot_raw_vs_filtered(trip, out_dir), plot_alpha_comparison(trip, out_dir)]
+        alpha_figs = plot_alpha_comparison(trip, out_dir)
+        figs = [plot_raw_vs_filtered(trip, out_dir)]
+        figs += alpha_figs if isinstance(alpha_figs, list) else [alpha_figs]
+        trip["gps"] = gps_check(trip)
+        if trip["gps"] is not None:
+            g = trip["gps"]
+            print(f"  -> Перевірка за GPS: r = {g['r']:.2f}, нахил = {g['slope']:.2f} ({g['n']} інтервалів)")
+            figs.append(plot_gps_check(trip, g, out_dir))
+        if trip["score_series"] is not None:
+            figs.append(plot_score_evolution(trip, out_dir))
         if not args.show:
             for f in figs:
                 plt.close(f)
