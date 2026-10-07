@@ -4,6 +4,24 @@ import CoreLocation
 import Combine
 import UIKit
 
+// Стан сесії, який бачить користувач і який записується в колонку State.
+// Тексти збігаються з попередніми версіями, щоб старі CSV аналізувались так само.
+enum SessionState: Equatable {
+    case idle
+    case calibrating
+    case recording
+    case distracted
+
+    var title: String {
+        switch self {
+        case .idle: return "Очікування"
+        case .calibrating: return "Калібрування..."
+        case .recording: return "Запис іде"
+        case .distracted: return "Відволікання!"
+        }
+    }
+}
+
 class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let motionManager = CMMotionManager()
     private let locationManager = CLLocationManager()
@@ -47,15 +65,14 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     @Published var hardBrakingCount: Int = 0
     @Published var hardAccelerationCount: Int = 0
-    @Published var distractionScore: Int = 0
-    @Published var phoneState: String = "Очікування"
+    @Published var distractionCount: Int = 0
+    @Published var phoneState: SessionState = .idle
 
     // Обчислюється з лічильників вище, тому завжди узгоджений з ними і
-    // автоматично скидається разом з resetData(). distractionScore уже
-    // містить накопичений штраф (5 за подію), тому додається як є.
+    // автоматично скидається разом з resetData()
     var safetyScore: Int {
         let maneuvers = hardBrakingCount + hardAccelerationCount
-        let penalty = Self.maneuverPenalty * maneuvers + distractionScore
+        let penalty = Self.maneuverPenalty * maneuvers + Self.distractionPenalty * distractionCount
         return max(0, 100 - penalty)
     }
 
@@ -191,8 +208,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
               now - lastDistractionTime > Self.distractionCooldown else { return }
         lastDistractionTime = now
 
-        distractionScore += Self.distractionPenalty
-        phoneState = "Відволікання!"
+        distractionCount += 1
+        phoneState = .distracted
 
         // Пишемо подію в CSV одразу, а не чекаємо наступного виміру
         appendEventRow(event: "Distraction", time: now)
@@ -210,7 +227,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard isRecording else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self = self, self.isRecording, !self.isCalibrating else { return }
-            self.phoneState = "Запис іде"
+            self.phoneState = .recording
         }
     }
 
@@ -278,7 +295,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         calibration = nil
         calibrationProgress = 0.0
         calibrationInfo = ""
-        phoneState = "Очікування"
+        phoneState = .idle
         motionManager.stopDeviceMotionUpdates()
         locationManager.stopUpdatingLocation()
         UIApplication.shared.isIdleTimerDisabled = false
@@ -287,7 +304,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         if recordedSamples > 0 {
             let safetyClass = SafetyClass.classify(safetyScore)
             summary = "Safety Score: \(safetyScore) (\(safetyClass.label))\n"
-                + "Маневри: \(hardBrakingCount + hardAccelerationCount), відволікання: \(distractionScore / Self.distractionPenalty)"
+                + "Маневри: \(hardBrakingCount + hardAccelerationCount), відволікання: \(distractionCount)"
         } else {
             summary = ""
         }
@@ -318,11 +335,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func resetData() {
         hardBrakingCount = 0
         hardAccelerationCount = 0
-        distractionScore = 0
+        distractionCount = 0
         currentGForceY = 0.0
 
         if !isRecording {
-            phoneState = "Очікування"
+            phoneState = .idle
             pendingRows.removeAll()
         }
     }
@@ -335,7 +352,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         isCalibrating = true
         calibrationProgress = 0.0
         orientationChangedSince = nil
-        phoneState = "Калібрування..."
+        phoneState = .calibrating
         calibrationInfo = "Тримайте телефон нерухомо"
         appendEventRow(event: event)
     }
@@ -368,7 +385,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         currentGForceY = 0.0
         lastTiltDegrees = 0.0
         orientationChangedSince = nil
-        phoneState = "Запис іде"
+        phoneState = .recording
 
         switch result.forwardSource {
         case .gps:
@@ -483,7 +500,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     private func writeRow(event: String, time timestamp: TimeInterval) {
-        let safeState = phoneState.replacingOccurrences(of: ",", with: "")
+        let safeState = phoneState.title.replacingOccurrences(of: ",", with: "")
         let a = lastUserAcceleration
         pendingRows.append("\(timestamp),\(currentGForceY),\(safeState),\(event),\(lastRawLongitudinal),\(a.x),\(a.y),\(a.z),\(lastTiltDegrees),\(safetyScore),\(lastKnownSpeed)")
 

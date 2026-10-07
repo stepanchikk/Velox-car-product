@@ -16,7 +16,7 @@ struct TrackerView: View {
                 Text("Статус:")
                     .font(.headline)
                 Spacer()
-                Text(sensorManager.phoneState)
+                Text(sensorManager.phoneState.title)
                     .bold()
                     .foregroundColor(statusColor(for: sensorManager.phoneState))
             }
@@ -55,7 +55,7 @@ struct TrackerView: View {
                 .padding(.horizontal)
 
             // Штрафні бали (Відволікання)
-            EventCard(title: "Штраф: Відволікання", count: sensorManager.distractionScore, color: .purple)
+            EventCard(title: "Відволікання (-5 за кожне)", count: sensorManager.distractionCount, color: .purple)
                 .padding(.horizontal)
             
             // Лічильники подій (Маневри)
@@ -146,11 +146,14 @@ struct TrackerView: View {
         sensorManager.isRecording && !sensorManager.isCalibrating && sensorManager.canManuallyRecalibrate
     }
 
-    private func statusColor(for state: String) -> Color {
-        if state.contains("Калібрування") { return .orange }
-        if state.contains("Відволікання") { return .red }
-        if state.contains("Запис") { return .green }
-        return .primary
+    // switch без default: якщо додати новий стан, компілятор нагадає задати колір
+    private func statusColor(for state: SessionState) -> Color {
+        switch state {
+        case .idle: return .primary
+        case .calibrating: return .orange
+        case .recording: return .green
+        case .distracted: return .red
+        }
     }
 }
 
