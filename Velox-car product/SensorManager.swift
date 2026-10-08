@@ -578,6 +578,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // MARK: - Повідомлення
 
     private func triggerHapticFeedback(style: UINotificationFeedbackGenerator.FeedbackType) {
+        // Вібрацію можна вимкнути в Налаштуваннях
+        guard AppSettings.hapticsEnabled else { return }
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(style)
     }

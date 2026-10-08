@@ -1,131 +1,205 @@
 import SwiftUI
 
+// Вхід і створення локального профілю (див. AccountStore)
 struct LoginView: View {
-    @AppStorage("isLoggedIn") var isLoggedIn: Bool = false
-    
-    @State private var isRegistrationMode = false
+    @EnvironmentObject private var account: AccountStore
+
+    private enum Mode: String, CaseIterable, Identifiable {
+        case login = "Вхід"
+        case register = "Новий профіль"
+        var id: String { rawValue }
+    }
+
+    private enum Field: Hashable {
+        case name, email, password, car
+    }
+
+    @State private var mode: Mode = .login
+    @State private var name = ""
     @State private var email = ""
     @State private var password = ""
-    
-    // масив, який може зберігати декілька помилок одночасно
-    @State private var errorMessages: [String] = []
-    
+    @State private var car = ""
+    @State private var errors: [String] = []
+    @State private var confirmReplace = false
+    @FocusState private var focused: Field?
+
     var body: some View {
-        VStack(spacing: 20) {
-            Text("Velox")
-                .font(.system(size: 48, weight: .bold, design: .rounded))
-                .foregroundColor(.blue)
-                .padding(.bottom, 10)
-            
-            Text(isRegistrationMode ? "Створення акаунту" : "Вхід у систему")
-                .font(.title2)
-                .bold()
-                .padding(.bottom, 10)
-            
-            TextField("Email", text: $email)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .keyboardType(.emailAddress)
-                .autocapitalization(.none)
-                .onChange(of: email) { errorMessages.removeAll() }
-            
-            SecureField("Пароль", text: $password)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .onChange(of: password) { errorMessages.removeAll() }
-            
-            // Якщо є помилки, виводимо їх списком
-            if !errorMessages.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(errorMessages, id: \.self) { error in
-                        Text("• \(error)")
-                            .foregroundColor(.red)
-                            .font(.footnote)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                header
+
+                Picker("Режим", selection: $mode) {
+                    ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                VStack(spacing: 12) {
+                    if mode == .register {
+                        VeloxField(icon: "person", placeholder: "Імʼя", text: $name,
+                                   focus: $focused, field: .name)
+                            .textContentType(.givenName)
+                            .submitLabel(.next)
+                    }
+                    VeloxField(icon: "envelope", placeholder: "Email", text: $email,
+                               focus: $focused, field: .email)
+                        .textContentType(.emailAddress)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.next)
+                    VeloxField(icon: "lock", placeholder: "Пароль", text: $password,
+                               focus: $focused, field: .password, isSecure: true)
+                        .textContentType(mode == .register ? .newPassword : .password)
+                        .submitLabel(mode == .register ? .next : .go)
+                    if mode == .register {
+                        VeloxField(icon: "car", placeholder: "Автомобіль, наприклад Toyota RAV4 (необовʼязково)",
+                                   text: $car, focus: $focused, field: .car)
+                            .submitLabel(.go)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-            }
-            
-            Button(action: handleAction) {
-                Text(isRegistrationMode ? "Зареєструватися" : "Увійти")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .cornerRadius(12)
-            }
-            .padding(.top, 10)
-            
-            Button(action: {
-                withAnimation {
-                    isRegistrationMode.toggle()
-                    errorMessages.removeAll() // Очищаємо екран при зміні режиму
+                .onSubmit(advanceFocus)
+
+                if mode == .register {
+                    passwordChecklist
                 }
-            }) {
-                Text(isRegistrationMode ? "Вже є акаунт? Увійти" : "Немає акаунту? Створити")
-                    .foregroundColor(.blue)
-                    .font(.callout)
+
+                if !errors.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(errors, id: \.self) { error in
+                            Label(error, systemImage: "exclamationmark.circle.fill")
+                                .font(.footnote)
+                                .foregroundStyle(VeloxColor.danger)
+                        }
+                    }
+                }
+
+                Button(mode == .login ? "Увійти" : "Створити профіль", action: submit)
+                    .buttonStyle(VeloxPrimaryButtonStyle())
+
+                Text(mode == .login
+                     ? "Профіль зберігається лише на цьому телефоні."
+                     : "Профіль зберігається лише на цьому телефоні. Пароль не зберігається у відкритому вигляді, а поїздки нікуди не надсилаються.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            
-            Spacer()
+            .padding(24)
+            .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity)
         }
-        .padding(30)
+        .scrollDismissesKeyboard(.interactively)
+        .background(VeloxColor.background.ignoresSafeArea())
+        .onAppear {
+            mode = account.hasProfile ? .login : .register
+            email = account.profile?.email ?? ""
+        }
+        .onChange(of: mode) {
+            errors.removeAll()
+        }
+        .confirmationDialog("Замінити профіль на цьому телефоні?",
+                            isPresented: $confirmReplace,
+                            titleVisibility: .visible) {
+            Button("Замінити профіль", role: .destructive, action: register)
+            Button("Скасувати", role: .cancel) { }
+        } message: {
+            Text("Профіль \(account.profile?.email ?? "") буде видалено. Записані поїздки залишаться.")
+        }
     }
-    
-    private func handleAction() {
-        // Очищаємо старі помилки перед новою перевіркою
-        errorMessages.removeAll()
-        
-        // 1. Валідація пошти
-        if !isValidEmail(email) {
-            errorMessages.append("Некоректний формат email (name@mail.com)")
+
+    // MARK: Частини екрана
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Velox")
+                .font(.system(size: 56, weight: .heavy, design: .rounded))
+                .italic()
+                .foregroundStyle(VeloxColor.accent)
+            Text(mode == .login ? "З поверненням. Увійдіть, щоб продовжити." : "Тренер безпечного водіння у вашому телефоні.")
+                .font(.title3)
+                .foregroundStyle(.secondary)
         }
-        
-        // 2. Валідація пароля
-        if isRegistrationMode {
-            // Додаємо всі знайдені помилки пароля до загального списку
-            let passwordErrors = validatePassword(password)
-            errorMessages.append(contentsOf: passwordErrors)
-        } else {
-            if password.isEmpty {
-                errorMessages.append("Будь ласка, введіть пароль")
+        .padding(.top, 40)
+    }
+
+    private var passwordChecklist: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(CredentialsValidator.passwordRequirements(password)) { item in
+                Label(item.text, systemImage: item.met ? "checkmark.circle.fill" : "circle")
+                    .font(.footnote)
+                    .foregroundStyle(item.met ? VeloxColor.safe : .secondary)
             }
         }
-        
-        // 3. Якщо масив помилок порожній, значить усе ідеально
-        if errorMessages.isEmpty {
-            withAnimation {
-                isLoggedIn = true
+        .animation(.easeOut(duration: 0.15), value: password)
+    }
+
+    // MARK: Дії
+
+    private func advanceFocus() {
+        switch focused {
+        case .name: focused = .email
+        case .email: focused = .password
+        case .password: if mode == .register { focused = .car } else { submit() }
+        case .car, .none: submit()
+        }
+    }
+
+    private func submit() {
+        errors.removeAll()
+        switch mode {
+        case .login:
+            if let error = account.login(email: email, password: password) {
+                errors = [error]
+            }
+        case .register:
+            // Інший email: наявний профіль буде замінено, тож питаємо
+            if let existing = account.profile?.email,
+               existing != CredentialsValidator.normalizedEmail(email) {
+                confirmReplace = true
+            } else {
+                register()
             }
         }
     }
-    
-    private func isValidEmail(_ email: String) -> Bool {
-        let emailFormat = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
-        let emailPredicate = NSPredicate(format:"SELF MATCHES %@", emailFormat)
-        return emailPredicate.evaluate(with: email)
+
+    private func register() {
+        errors = account.register(name: name, email: email, password: password, car: car)
+        if errors.isEmpty {
+            password = ""
+        }
     }
-    
-    // Аналізатор повертає список усіх знайдених недоліків
-    private func validatePassword(_ pass: String) -> [String] {
-        var errors: [String] = []
-        
-        if pass.count < 8 {
-            errors.append("Мінімум 8 символів")
+}
+
+// MARK: - Поле введення
+
+struct VeloxField<Field: Hashable>: View {
+    let icon: String
+    let placeholder: String
+    @Binding var text: String
+    // Фокус задається на самому полі введення, а не на обгортці
+    var focus: FocusState<Field?>.Binding
+    let field: Field
+    var isSecure = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+            Group {
+                if isSecure {
+                    SecureField(placeholder, text: $text)
+                        .focused(focus, equals: field)
+                } else {
+                    TextField(placeholder, text: $text)
+                        .focused(focus, equals: field)
+                }
+            }
         }
-        if pass.rangeOfCharacter(from: .uppercaseLetters) == nil {
-            errors.append("Хоча б одна велика літера (A-Z)")
-        }
-        if pass.rangeOfCharacter(from: .lowercaseLetters) == nil {
-            errors.append("Хоча б одна мала літера (a-z)")
-        }
-        if pass.rangeOfCharacter(from: .decimalDigits) == nil {
-            errors.append("Хоча б одна цифра (0-9)")
-        }
-        if pass.rangeOfCharacter(from: CharacterSet(charactersIn: "!@#$%^&*()-_=+[]{}|;:'\",.<>/?`~")) == nil {
-            errors.append("Хоча б один спецсимвол (!@#$тощо)")
-        }
-        
-        return errors
+        .padding(.horizontal, 16)
+        .padding(.vertical, 15)
+        .background(VeloxColor.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(VeloxColor.hairline, lineWidth: 1)
+        )
     }
 }

@@ -4,7 +4,7 @@ import SwiftUI
 // експорт CSV через системне меню «Поділитися» і видалення.
 struct TripHistoryView: View {
     @EnvironmentObject private var sensorManager: SensorManager
-    @StateObject private var store = TripStore()
+    @EnvironmentObject private var store: TripStore
     @State private var tripToDelete: TripSummary?
 
     var body: some View {
@@ -13,11 +13,12 @@ struct TripHistoryView: View {
                 if store.trips.isEmpty && !store.isLoading {
                     ContentUnavailableView("Поїздок ще немає",
                                            systemImage: "car",
-                                           description: Text("Натисніть «Старт» на вкладці «Трекер», щоб записати першу поїздку."))
+                                           description: Text("Натисніть «Почати поїздку» на головній або на вкладці «Поїздка»."))
                 } else {
                     tripList
                 }
             }
+            .veloxScreenBackground()
             .navigationTitle("Історія")
             .navigationDestination(for: TripSummary.self) { trip in
                 TripDetailView(trip: trip)
@@ -30,11 +31,6 @@ struct TripHistoryView: View {
                 }
             }
             .refreshable {
-                await store.reload(excluding: sensorManager.currentTripFileName)
-            }
-            // Перечитуємо при відкритті вкладки і щойно запис зупинився:
-            // поточний (незавершений) файл у список не потрапляє
-            .task(id: sensorManager.isRecording) {
                 await store.reload(excluding: sensorManager.currentTripFileName)
             }
             .confirmationDialog("Видалити поїздку?",
@@ -60,14 +56,16 @@ struct TripHistoryView: View {
     private var tripList: some View {
         List {
             if sensorManager.isRecording {
-                Label("Іде запис: поточна поїздка з'явиться тут після зупинки", systemImage: "record.circle")
+                Label("Іде запис: поточна поїздка зʼявиться тут після зупинки", systemImage: "record.circle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .listRowBackground(Color.clear)
             }
             ForEach(store.trips) { trip in
                 NavigationLink(value: trip) {
                     TripRow(trip: trip)
                 }
+                .listRowBackground(VeloxColor.panel)
                 .swipeActions {
                     Button(role: .destructive) {
                         tripToDelete = trip
@@ -96,34 +94,55 @@ struct TripRow: View {
     let trip: TripSummary
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 14) {
+            scoreBadge
+            VStack(alignment: .leading, spacing: 6) {
                 Text(trip.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.headline)
-                Text(details)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    Label(TripFormat.duration(trip.stats.duration), systemImage: "clock")
+                    if let meters = trip.stats.distanceMeters, meters > 0 {
+                        Label(TripFormat.distance(meters), systemImage: "road.lanes")
+                    }
+                    if let maneuvers = trip.stats.maneuvers, let distractions = trip.stats.distractions,
+                       maneuvers + distractions > 0 {
+                        Label("\(maneuvers + distractions)", systemImage: "exclamationmark.triangle")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .labelStyle(CompactLabelStyle())
             }
-            Spacer()
-            if let score = trip.stats.score {
-                Text("\(score)")
-                    .font(.system(.title2, design: .rounded).bold())
-                    .monospacedDigit()
-                    .foregroundStyle(SafetyClass.classify(score).color)
-            }
+            Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 
-    private var details: String {
-        var parts = [TripFormat.duration(trip.stats.duration)]
-        if let meters = trip.stats.distanceMeters, meters > 0 {
-            parts.append(TripFormat.distance(meters))
+    private var scoreBadge: some View {
+        let color = trip.stats.score.map { SafetyClass.classify($0).color } ?? VeloxColor.hairline
+        return ZStack {
+            Circle()
+                .stroke(color.opacity(0.35), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: Double(trip.stats.score ?? 0) / 100)
+                .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text(trip.stats.score.map { "\($0)" } ?? "?")
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .monospacedDigit()
         }
-        if let maneuvers = trip.stats.maneuvers, let distractions = trip.stats.distractions {
-            parts.append("маневри: \(maneuvers), відволікання: \(distractions)")
+        .frame(width: 46, height: 46)
+    }
+}
+
+/// Іконка і текст поруч, з меншим відступом, ніж у стандартного Label
+struct CompactLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon
+            configuration.title
         }
-        return parts.joined(separator: " · ")
     }
 }
 
@@ -137,12 +156,11 @@ struct TripDetailView: View {
             if let score = trip.stats.score {
                 Section {
                     SafetyScoreCard(score: score)
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
                 }
+                .listRowBackground(Color.clear)
             }
 
-            Section("Поїздка") {
+            Section {
                 LabeledContent("Дата", value: trip.date.formatted(date: .long, time: .shortened))
                 LabeledContent("Тривалість", value: TripFormat.duration(trip.stats.duration))
                 if let meters = trip.stats.distanceMeters {
@@ -150,9 +168,11 @@ struct TripDetailView: View {
                 }
                 LabeledContent("Вимірів", value: "\(trip.stats.samples)")
                 LabeledContent("Калібрування", value: calibrationText)
+            } header: {
+                SectionTitle("Поїздка")
             }
 
-            Section("Події") {
+            Section {
                 if let brakings = trip.stats.hardBrakings,
                    let accelerations = trip.stats.hardAccelerations,
                    let distractions = trip.stats.distractions {
@@ -163,15 +183,17 @@ struct TripDetailView: View {
                     Text("Файл записано старою версією: події в ньому не позначено")
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                SectionTitle("Події")
             }
 
-            Section("Файл") {
+            Section {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Назва")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(trip.fileName)
-                        .font(.system(.footnote, design: .monospaced))
+                        .font(.footnote)
                         .textSelection(.enabled)
                 }
                 if let size = trip.fileSize {
@@ -181,13 +203,16 @@ struct TripDetailView: View {
                     Label("Запис обірвався, пропущено неповних рядків: \(trip.stats.skippedLines)",
                           systemImage: "exclamationmark.triangle")
                         .font(.footnote)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(VeloxColor.medium)
                 }
                 ShareLink(item: trip.url) {
                     Label("Експортувати CSV", systemImage: "square.and.arrow.up")
                 }
+            } header: {
+                SectionTitle("Файл")
             }
         }
+        .veloxScreenBackground()
         .navigationTitle(trip.date.formatted(date: .abbreviated, time: .shortened))
         .navigationBarTitleDisplayMode(.inline)
     }

@@ -223,6 +223,23 @@ final class TripStore: ObservableObject {
         isLoading = false
     }
 
+    /// Видаляє всі файли зі списку (поточний запис у список не входить)
+    func deleteAll() {
+        var failed = 0
+        for trip in trips {
+            do {
+                try FileManager.default.removeItem(at: trip.url)
+            } catch {
+                failed += 1
+            }
+        }
+        trips.removeAll { !FileManager.default.fileExists(atPath: $0.url.path) }
+        cache = cache.filter { name, _ in trips.contains { $0.fileName == name } }
+        if failed > 0 {
+            errorMessage = "Не вдалося видалити файлів: \(failed)"
+        }
+    }
+
     func delete(_ trip: TripSummary) {
         do {
             try FileManager.default.removeItem(at: trip.url)

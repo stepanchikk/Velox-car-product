@@ -36,9 +36,9 @@ nonisolated enum SafetyClass {
 
     var color: Color {
         switch self {
-        case .safe: return .green
-        case .medium: return .yellow
-        case .dangerous: return .red
+        case .safe: return VeloxColor.safe
+        case .medium: return VeloxColor.medium
+        case .dangerous: return VeloxColor.danger
         }
     }
 }

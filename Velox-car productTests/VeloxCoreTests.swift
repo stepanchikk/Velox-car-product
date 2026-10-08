@@ -509,3 +509,123 @@ final class TripCSVParserTests: XCTestCase {
         XCTAssertEqual(TripFormat.distance(12345), "12.3 км")
     }
 }
+
+// MARK: - Профіль: перевірка даних і пароль
+
+final class CredentialsTests: XCTestCase {
+
+    func testEmailValidation() {
+        XCTAssertTrue(CredentialsValidator.isValidEmail("driver@mail.com"))
+        XCTAssertTrue(CredentialsValidator.isValidEmail("s.shudrovskyi+velox@chnu.edu.ua"))
+        XCTAssertFalse(CredentialsValidator.isValidEmail("driver@mail"))
+        XCTAssertFalse(CredentialsValidator.isValidEmail("driver mail.com"))
+        XCTAssertFalse(CredentialsValidator.isValidEmail(""))
+        XCTAssertEqual(CredentialsValidator.normalizedEmail("  Driver@Mail.COM "), "driver@mail.com")
+    }
+
+    func testPasswordRequirements() {
+        XCTAssertFalse(CredentialsValidator.isStrongPassword("Sh0rt!"))
+        XCTAssertFalse(CredentialsValidator.isStrongPassword("alllowercase1!"))
+        XCTAssertFalse(CredentialsValidator.isStrongPassword("NoDigitsHere!"))
+        XCTAssertFalse(CredentialsValidator.isStrongPassword("NoSpecial123"))
+        XCTAssertTrue(CredentialsValidator.isStrongPassword("Velox2026!"))
+        let unmet = CredentialsValidator.passwordRequirements("abc").filter { !$0.met }
+        XCTAssertEqual(unmet.count, 4)
+    }
+
+    func testPasswordHashing() {
+        let credential = PasswordHasher.makeCredential("Velox2026!")
+        XCTAssertEqual(credential.count, PasswordHasher.saltLength + PasswordHasher.hashLength)
+        XCTAssertTrue(PasswordHasher.verify("Velox2026!", credential: credential))
+        XCTAssertFalse(PasswordHasher.verify("velox2026!", credential: credential))
+        XCTAssertFalse(PasswordHasher.verify("", credential: credential))
+        // Однаковий пароль із різною сіллю дає різні записи
+        XCTAssertNotEqual(credential, PasswordHasher.makeCredential("Velox2026!"))
+        // Пароль не міститься в записі у відкритому вигляді
+        XCTAssertNil(credential.range(of: Data("Velox2026!".utf8)))
+    }
+
+    func testHashIsDeterministicForSameSalt() {
+        let salt = Data(repeating: 7, count: PasswordHasher.saltLength)
+        let a = PasswordHasher.hash("Velox2026!", salt: salt, rounds: 1_000)
+        let b = PasswordHasher.hash("Velox2026!", salt: salt, rounds: 1_000)
+        XCTAssertEqual(a.count, PasswordHasher.hashLength)
+        XCTAssertEqual(a, b)
+        XCTAssertTrue(PasswordHasher.hash("", salt: salt).isEmpty)
+    }
+}
+
+// MARK: - Статистика і досягнення
+
+final class GamificationTests: XCTestCase {
+
+    private func trip(day: Int, score: Int?, duration: TimeInterval = 600,
+                      distance: Double? = 5_000, distractions: Int? = 0) -> TripSummary {
+        var stats = TripStats()
+        stats.duration = duration
+        stats.score = score
+        stats.distanceMeters = distance
+        stats.distractions = distractions
+        stats.hardBrakings = 0
+        stats.hardAccelerations = 0
+        return TripSummary(fileName: "Velox_Data_\(day).csv",
+                           url: URL(fileURLWithPath: "/tmp/velox-\(day).csv"),
+                           date: Date(timeIntervalSince1970: Double(day) * 86_400),
+                           fileSize: nil,
+                           stats: stats)
+    }
+
+    func testStatsUseTenNewestTrips() {
+        // День 1 - найстаріша поїздка з оцінкою 0, далі 11 поїздок по 90
+        var trips = [trip(day: 1, score: 0)]
+        trips += (2...12).map { trip(day: $0, score: 90) }
+        let stats = DrivingStats(trips: trips.shuffled())
+        XCTAssertEqual(stats.tripCount, 12)
+        XCTAssertEqual(stats.recentScoreCount, 10)
+        XCTAssertEqual(stats.averageRecentScore, 90)          // стара поїздка не враховується
+        XCTAssertEqual(stats.recentScores.count, 10)
+        XCTAssertEqual(stats.totalDistanceMeters, 60_000, accuracy: 1e-9)
+    }
+
+    func testRecentScoresGoFromOldToNew() {
+        let stats = DrivingStats(trips: [trip(day: 3, score: 70), trip(day: 1, score: 100), trip(day: 2, score: 85)])
+        XCTAssertEqual(stats.recentScores, [100, 85, 70])
+        XCTAssertEqual(stats.averageRecentScore, 85)
+    }
+
+    func testEmptyHistory() {
+        let stats = DrivingStats(trips: [])
+        XCTAssertNil(stats.averageRecentScore)
+        XCTAssertTrue(AchievementCatalog.evaluate([]).allSatisfy { !$0.isUnlocked })
+    }
+
+    func testAchievements() {
+        let unlocked = { (trips: [TripSummary]) in
+            Set(AchievementCatalog.evaluate(trips).filter(\.isUnlocked).map(\.id))
+        }
+        // 10 хвилин, оцінка 100, без відволікань
+        XCTAssertEqual(unlocked([trip(day: 1, score: 100)]), ["first", "perfect", "focused"])
+        // Хвилинний заїзд не дає "ідеальних" досягнень
+        XCTAssertEqual(unlocked([trip(day: 1, score: 100, duration: 60)]), ["first"])
+        // Відволікання забирає "Телефон відкладено"
+        XCTAssertFalse(unlocked([trip(day: 1, score: 95, distractions: 1)]).contains("focused"))
+        // 10 поїздок по 10 км з оцінкою 92
+        let many = (1...10).map { trip(day: $0, score: 92, distance: 10_000) }
+        XCTAssertTrue(unlocked(many).isSuperset(of: ["ten", "smooth", "hundred"]))
+    }
+
+    func testAchievementProgress() {
+        let smooth = AchievementCatalog.evaluate((1...2).map { trip(day: $0, score: 95) })
+            .first { $0.id == "smooth" }
+        XCTAssertEqual(smooth?.progress ?? -1, 0.4, accuracy: 1e-9)
+        XCTAssertEqual(smooth?.progressText, "2 з 5")
+    }
+
+    func testTipIsStableDuringDay() {
+        let day = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_790_000_000))
+        let morning = day.addingTimeInterval(8 * 3_600)
+        let evening = day.addingTimeInterval(20 * 3_600)
+        XCTAssertEqual(DrivingTips.tip(for: morning), DrivingTips.tip(for: evening))
+        XCTAssertFalse(DrivingTips.tip(for: morning).isEmpty)
+    }
+}

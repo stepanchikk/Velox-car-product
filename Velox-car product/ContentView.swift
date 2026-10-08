@@ -1,15 +1,21 @@
 import SwiftUI
 
+// Корінь застосунку: екран входу або основне меню, тема оформлення
 struct ContentView: View {
-    // Ця змінна зберігається в пам'яті телефону.
-    // Якщо false — показуємо логін, якщо true — головне меню.
-    @AppStorage("isLoggedIn") var isLoggedIn: Bool = false
-    
+    @StateObject private var account = AccountStore()
+    @AppStorage(AppSettings.themeKey) private var theme = AppTheme.dark.rawValue
+
     var body: some View {
-        if isLoggedIn {
-            MainTabView()
-        } else {
-            LoginView()
+        Group {
+            if account.isLoggedIn {
+                MainTabView()
+            } else {
+                LoginView()
+            }
         }
+        .environmentObject(account)
+        .tint(VeloxColor.accent)
+        .preferredColorScheme((AppTheme(rawValue: theme) ?? .dark).colorScheme)
+        .animation(.easeInOut(duration: 0.25), value: account.isLoggedIn)
     }
 }
