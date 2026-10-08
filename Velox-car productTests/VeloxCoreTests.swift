@@ -425,3 +425,87 @@ final class OrientationCalibratorTests: XCTestCase {
         XCTAssertEqual(result.forwardQuality, 1.0)
     }
 }
+
+// MARK: - Історія поїздок
+
+final class TripCSVParserTests: XCTestCase {
+
+    // Поточний формат: калібрування, маневри, відволікання, швидкість і обірваний останній рядок
+    func testCurrentFormat() throws {
+        let csv = """
+        Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg,Score,Speed_mps
+        0.0,0,Калібрування...,CalibrationStart,0,0,0,0,0,100,
+        2.0,0,Запис іде,CalibrationDone,0,0,0,0,0,100,10
+        2.1,0.1,Запис іде,,0,0,0,0,0,100,10
+        3.1,0.5,Запис іде,HardAcceleration,0,0,0,0,0,98,12
+        4.1,0.1,Запис іде,,0,0,0,0,0,98,12
+        4.2,0.1,Відволікання!,Distraction,0,0,0,0,0,93,12
+        5.1,-0.5,Запис іде,HardBraking,0,0,0,0,0,91,8
+        5.2,0.1,Запис
+        """
+        let stats = try XCTUnwrap(TripCSVParser.parse(csv))
+        XCTAssertEqual(stats.samples, 4)                 // службові рядки не рахуються
+        XCTAssertEqual(stats.duration, 5.1, accuracy: 1e-9)
+        XCTAssertEqual(stats.hardBrakings, 1)
+        XCTAssertEqual(stats.hardAccelerations, 1)
+        XCTAssertEqual(stats.distractions, 1)
+        XCTAssertEqual(stats.maneuvers, 2)
+        XCTAssertEqual(stats.score, 91)                  // останнє значення колонки Score
+        XCTAssertEqual(stats.calibration, .gps)
+        XCTAssertEqual(stats.skippedLines, 1)            // обірваний рядок
+        // Трапеції по вимірах: (10+12)/2*1 + 12*1 + (12+8)/2*1 = 33 м
+        XCTAssertEqual(try XCTUnwrap(stats.distanceMeters), 33, accuracy: 1e-9)
+    }
+
+    // Файл без колонки Score: оцінка рахується за подіями
+    func testScoreComputedWhenColumnMissing() throws {
+        let csv = """
+        Timestamp,Filtered_Y,State,Event
+        0.1,0,Запис іде,
+        0.2,0.5,Запис іде,HardAcceleration
+        0.3,0,Відволікання!,Distraction
+        """
+        let stats = try XCTUnwrap(TripCSVParser.parse(csv))
+        XCTAssertEqual(stats.score, 93)                  // 100 - 2 - 5
+        XCTAssertNil(stats.distanceMeters)
+        XCTAssertEqual(stats.calibration, .unknown)
+    }
+
+    // Найстаріший формат без Event: події невідомі, а не нульові
+    func testOldestFormat() throws {
+        let csv = "Timestamp,Filtered_Y,State\n0.0,0.0,Запис іде\n0.1,0.01,Запис іде\n"
+        let stats = try XCTUnwrap(TripCSVParser.parse(csv))
+        XCTAssertEqual(stats.samples, 2)
+        XCTAssertNil(stats.hardBrakings)
+        XCTAssertNil(stats.maneuvers)
+        XCTAssertNil(stats.score)
+    }
+
+    func testFallbackCalibrationAndCRLF() throws {
+        let csv = "Timestamp,Filtered_Y,State,Event\r\n0.0,0,Калібрування...,CalibrationStart\r\n2.0,0,Запис іде,CalibrationDoneFallback\r\n2.1,0,Запис іде,\r\n"
+        let stats = try XCTUnwrap(TripCSVParser.parse(csv))
+        XCTAssertEqual(stats.calibration, .fallback)
+        XCTAssertEqual(stats.samples, 1)
+        XCTAssertEqual(stats.skippedLines, 0)
+    }
+
+    func testNotATripFile() {
+        XCTAssertNil(TripCSVParser.parse("a,b\n1,2\n"))
+        XCTAssertNil(TripCSVParser.parse(""))
+    }
+
+    func testDateFromFileName() throws {
+        let date = try XCTUnwrap(TripLibrary.date(fromFileName: "Velox_Data_2026-09-29_09-49-45.csv"))
+        let c = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        XCTAssertEqual([c.year, c.month, c.day, c.hour, c.minute, c.second], [2026, 9, 29, 9, 49, 45])
+        XCTAssertNil(TripLibrary.date(fromFileName: "notes.csv"))
+    }
+
+    func testFormatting() {
+        XCTAssertEqual(TripFormat.duration(915.1), "15 хв 15 с")
+        XCTAssertEqual(TripFormat.duration(45), "45 с")
+        XCTAssertEqual(TripFormat.duration(3725), "1 год 2 хв")
+        XCTAssertEqual(TripFormat.distance(850), "850 м")
+        XCTAssertEqual(TripFormat.distance(12345), "12.3 км")
+    }
+}

@@ -396,6 +396,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // Кнопку варто вимикати під час руху: перекалібрування вимагає їхати
     // (фаза GPS), а взаємодія з телефоном на ходу суперечить самій меті
     // застосунку. Автоматичне перекалібрування працює без цього.
+    // Файл поточного запису: історія поїздок його не показує, бо він ще не завершений
+    var currentTripFileName: String? {
+        isRecording ? csvWriter.fileName : nil
+    }
+
     var canManuallyRecalibrate: Bool {
         lastKnownSpeed < Self.manualRecalibrationMaxSpeed
     }

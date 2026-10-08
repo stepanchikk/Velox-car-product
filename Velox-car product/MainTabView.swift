@@ -14,6 +14,13 @@ struct MainTabView: View {
                     Text("Трекер")
                 }
             
+            // Збережені поїздки й експорт CSV
+            TripHistoryView()
+                .tabItem {
+                    Image(systemName: "clock.arrow.circlepath")
+                    Text("Історія")
+                }
+
             // Новий екран профілю
             ProfileView()
                 .tabItem {
