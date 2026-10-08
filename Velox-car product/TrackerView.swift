@@ -96,12 +96,14 @@ struct TrackerView: View {
             Divider().frame(height: 44)
             counter(value: sensorManager.hardAccelerationCount, label: "розгони", color: VeloxColor.medium)
             Divider().frame(height: 44)
-            counter(value: sensorManager.distractionCount, label: "відволікання", color: VeloxColor.accent)
+            counter(value: sensorManager.distractionCount, label: "відволікання", color: VeloxColor.accent,
+                    detail: sensorManager.distractionSeconds > 0
+                        ? TripFormat.duration(sensorManager.distractionSeconds) : nil)
         }
         .veloxPanel(radius: 18, padding: 14)
     }
 
-    private func counter(value: Int, label: String, color: Color) -> some View {
+    private func counter(value: Int, label: String, color: Color, detail: String? = nil) -> some View {
         VStack(spacing: 2) {
             Text("\(value)")
                 .font(.system(size: 30, weight: .bold, design: .rounded))
@@ -112,6 +114,12 @@ struct TrackerView: View {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            // Сумарний час з телефоном у руках
+            if let detail = detail {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(color)
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -198,6 +206,7 @@ struct TrackerView: View {
         case .calibrating: return VeloxColor.medium
         case .recording: return VeloxColor.safe
         case .distracted: return VeloxColor.danger
+        case .onCall: return VeloxColor.accent
         }
     }
 }

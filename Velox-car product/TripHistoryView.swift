@@ -209,6 +209,9 @@ struct TripDetailView: View {
                     LabeledContent("Різкі гальмування", value: "\(brakings)")
                     LabeledContent("Агресивні розгони", value: "\(accelerations)")
                     LabeledContent("Відволікання", value: "\(distractions)")
+                    if let seconds = trip.stats.distractionSeconds, distractions > 0 {
+                        LabeledContent("Телефон у руках", value: TripFormat.duration(seconds))
+                    }
                 } else {
                     Text("Файл записано старою версією: події в ньому не позначено")
                         .foregroundStyle(.secondary)

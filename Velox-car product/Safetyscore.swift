@@ -43,13 +43,22 @@ nonisolated enum SafetyClass {
     }
 }
 
-// Модель штрафів Safety Score: 100 балів, мінус 2 за кожен маневр і мінус 5
-// за кожне відволікання, не менше 0 (README, пояснювальна записка, п. 1.3.4)
+// Модель штрафів Safety Score: 100 балів, мінус 2 за кожен маневр, мінус 5
+// за кожне відволікання і додатково мінус 1 за кожні 10 с з телефоном у руках
+// (не більше 5 за одне відволікання), не менше 0. Параметри - у VeloxConfig.
 nonisolated enum SafetyScoreCalculator {
     static let maneuverPenalty = VeloxConfig.maneuverPenalty
     static let distractionPenalty = VeloxConfig.distractionPenalty
 
-    static func score(maneuvers: Int, distractions: Int) -> Int {
-        max(0, 100 - maneuverPenalty * maneuvers - distractionPenalty * distractions)
+    /// durationPenalty - сума штрафів за тривалість відволікань (DistractionTracker)
+    static func score(maneuvers: Int, distractions: Int, durationPenalty: Int = 0) -> Int {
+        max(0, 100 - maneuverPenalty * maneuvers - distractionPenalty * distractions - durationPenalty)
+    }
+
+    /// Штраф за тривалість одного відволікання
+    static func durationPenalty(for seconds: TimeInterval) -> Int {
+        guard seconds > 0 else { return 0 }
+        let steps = Int(seconds / VeloxConfig.distractionDurationStep)
+        return min(VeloxConfig.distractionDurationPenaltyMax, steps * VeloxConfig.distractionDurationPenalty)
     }
 }

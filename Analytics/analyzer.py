@@ -55,6 +55,9 @@ CONFIG_KEYS = {
     "maneuverCooldown": ("COOLDOWN", float, 3.0),
     "maneuverPenalty": ("MANEUVER_PENALTY", int, 2),
     "distractionPenalty": ("DISTRACTION_PENALTY", int, 5),
+    "distractionDurationStep": ("DURATION_STEP", float, 10.0),
+    "distractionDurationPenalty": ("DURATION_PENALTY", int, 1),
+    "distractionDurationPenaltyMax": ("DURATION_PENALTY_MAX", int, 5),
     "safeScoreMin": ("SAFE_SCORE_MIN", int, 90),
     "mediumScoreMin": ("MEDIUM_SCORE_MIN", int, 75),
 }
@@ -64,6 +67,9 @@ THRESHOLD = 0.4
 COOLDOWN = 3.0
 MANEUVER_PENALTY = 2
 DISTRACTION_PENALTY = 5
+DURATION_STEP = 10.0          # штраф за тривалість: за кожні DURATION_STEP с
+DURATION_PENALTY = 1          # ... мінус DURATION_PENALTY балів
+DURATION_PENALTY_MAX = 5      # ... але не більше за одне відволікання
 SAFE_SCORE_MIN = 90
 MEDIUM_SCORE_MIN = 75
 
@@ -79,6 +85,9 @@ EVENT_STYLE = {
     "HardAcceleration": ("^", "darkorange", "Агресивний розгін"),
 }
 DISTRACTION_COLOR = "purple"
+CALL_COLOR = "teal"
+# Службові рядки нових версій: повторюють останні значення, вимірами не є
+SERVICE_EVENTS = ("DistractionEnd", "DistractionResume", "CallIncoming", "CallStart", "CallStart_Handheld", "CallEnd")
 
 
 # ======================================================================
@@ -221,7 +230,8 @@ def load_trip(path):
     # щоб не псувати відновлення сирого сигналу.
     same_as_prev = df["Filtered_Y"].eq(df["Filtered_Y"].shift(1))
     is_calibration = df["Event"].str.startswith("Calibration")
-    is_extra = (df["Event"].eq("Distraction") & same_as_prev) | is_calibration
+    is_service = df["Event"].isin(SERVICE_EVENTS)
+    is_extra = (df["Event"].eq("Distraction") & same_as_prev) | is_calibration | is_service
     motion = df[~is_extra].reset_index(drop=True)
 
     t = motion["Timestamp"].to_numpy(dtype=float)
@@ -302,11 +312,13 @@ def gps_check(trip, bin_s=1.0):
 
 
 def find_calibration_windows(df):
-    """Проміжки калібрування: від CalibrationStart* до наступного CalibrationDone."""
+    """Проміжки без калібрування: від CalibrationStart* до наступного CalibrationDone*.
+    Невдале перекалібрування в русі (CalibrationFailed, потім CalibrationStart_Retry)
+    входить в один проміжок, бо весь цей час виміри не записувались."""
     windows = []
     start = None
     for ts, ev in zip(df["Timestamp"], df["Event"]):
-        if ev.startswith("CalibrationStart"):
+        if ev.startswith("CalibrationStart") and start is None:
             start = ts
         elif ev.startswith("CalibrationDone") and start is not None:
             windows.append((float(start), float(ts)))
@@ -349,12 +361,53 @@ def detect_maneuvers(t, y, threshold, cooldown=None):
     return found
 
 
-def safety_score(maneuvers, distractions, params=None):
+def distraction_episodes(events):
+    """Відволікання з тривалістю: Distraction починає нове, DistractionResume
+    продовжує попереднє, DistractionEnd закриває шматок. Повертає список
+    епізодів, кожен - список інтервалів (початок, кінець)."""
+    episodes, opened = [], None
+    for ts, ev in zip(events["Timestamp"], events["Event"]):
+        if ev == "Distraction":
+            episodes.append([])
+            opened = float(ts)
+        elif ev == "DistractionResume" and episodes:
+            opened = float(ts)
+        elif ev == "DistractionEnd" and opened is not None and episodes:
+            episodes[-1].append((opened, float(ts)))
+            opened = None
+    return episodes
+
+
+def count_calls(events):
+    """Кількість дзвінків: від CallIncoming або CallStart* до CallEnd - один дзвінок."""
+    count, open_call = 0, False
+    for ev in events:
+        if ev in ("CallIncoming", "CallStart", "CallStart_Handheld"):
+            if not open_call:
+                count += 1
+                open_call = True
+        elif ev == "CallEnd":
+            open_call = False
+    return count
+
+
+def duration_penalty(seconds, params=None):
+    """Штраф за тривалість одного відволікання (SafetyScoreCalculator.durationPenalty)."""
+    step = params["distractionDurationStep"] if params else DURATION_STEP
+    per_step = params["distractionDurationPenalty"] if params else DURATION_PENALTY
+    cap = params["distractionDurationPenaltyMax"] if params else DURATION_PENALTY_MAX
+    if seconds <= 0:
+        return 0
+    return min(cap, int(seconds // step) * per_step)
+
+
+def safety_score(maneuvers, distractions, params=None, extra=0):
     """Формула застосунку (SafetyScoreCalculator): 100 - штрафи, не менше 0.
-    params - параметри поїздки (trip_params); без них - поточні."""
+    params - параметри поїздки (trip_params); без них - поточні.
+    extra - сумарний штраф за тривалість відволікань."""
     m_pen = params["maneuverPenalty"] if params else MANEUVER_PENALTY
     d_pen = params["distractionPenalty"] if params else DISTRACTION_PENALTY
-    return max(0, 100 - (m_pen * maneuvers + d_pen * distractions))
+    return max(0, 100 - (m_pen * maneuvers + d_pen * distractions + extra))
 
 
 def classify_score(score, params=None):
@@ -427,6 +480,12 @@ def plot_raw_vs_filtered(trip, out_dir):
     for ts in events[events["Event"] == "Distraction"]["Timestamp"]:
         ax.axvline(ts, color=DISTRACTION_COLOR, linestyle=":", linewidth=1.6, alpha=0.9,
                    label="Відволікання (Anti-Fraud)")
+    for episode in distraction_episodes(events):
+        for d_start, d_end in episode:
+            ax.axvspan(d_start, d_end, color=DISTRACTION_COLOR, alpha=0.12, label="Телефон у руках")
+    for ts in events[events["Event"].str.startswith("Call")]["Timestamp"]:
+        ax.axvline(ts, color=CALL_COLOR, linestyle="-.", linewidth=1.2, alpha=0.8,
+                   label="Дзвінок (без штрафу, якщо без рук)")
 
     return _finish_trip_plot(fig, ax, f"Сира та відфільтрована телеметрія: {trip['name']}",
                              os.path.join(out_dir, f"{stem(trip)}_raw_vs_filtered.png"))
@@ -634,8 +693,12 @@ def summarize(trips):
         sim_brake = sum(1 for _, k in sim if k == "HardBraking")
         sim_accel = sum(1 for _, k in sim if k == "HardAcceleration")
 
+        episodes = distraction_episodes(trip["events"])
+        episode_seconds = [sum(e - b for b, e in ep) for ep in episodes]
+        extra = sum(duration_penalty(sec, p) for sec in episode_seconds)
+        has_durations = bool(ev.eq("DistractionEnd").any()) or "distractionDurationStep" in trip["metadata"]
         if trip["has_event_column"]:
-            score_computed = safety_score(logged_brake + logged_accel, logged_distract, p)
+            score_computed = safety_score(logged_brake + logged_accel, logged_distract, p, extra)
             score_computed_label = f"{score_computed} ({classify_score(score_computed, p)})"
         else:
             logged_brake = logged_accel = logged_distract = na
@@ -654,6 +717,9 @@ def summarize(trips):
             "Гальмувань (лог)": logged_brake,
             "Розгонів (лог)": logged_accel,
             "Відволікань (лог)": logged_distract,
+            "Телефон у руках, с": round(sum(episode_seconds), 1) if has_durations else na,
+            "Штраф за тривалість": extra if has_durations else na,
+            "Дзвінків": count_calls(ev),
             "Гальмувань (перерахунок)": sim_brake,
             "Розгонів (перерахунок)": sim_accel,
             "Час вище порога, %": round(100.0 * float(np.mean(np.abs(y) > p["maneuverThreshold"])), 2),

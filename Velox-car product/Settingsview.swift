@@ -63,12 +63,14 @@ struct SettingsView: View {
                 LabeledContent("Поріг різкого маневру", value: String(format: "%.1f G", VeloxConfig.maneuverThreshold))
                 LabeledContent("Штраф за маневр", value: "-\(VeloxConfig.maneuverPenalty)")
                 LabeledContent("Штраф за відволікання", value: "-\(VeloxConfig.distractionPenalty)")
+                LabeledContent("За тривалість відволікання",
+                               value: "-\(VeloxConfig.distractionDurationPenalty) за кожні \(Int(VeloxConfig.distractionDurationStep)) с, до -\(VeloxConfig.distractionDurationPenaltyMax)")
                 LabeledContent("Безпечний водій", value: "від \(VeloxConfig.safeScoreMin)")
                 LabeledContent("Середній рівень", value: "від \(VeloxConfig.mediumScoreMin)")
             } header: {
                 SectionTitle("Як рахується Safety Score")
             } footer: {
-                Text("Кожна поїздка починається зі 100 балів. Різкі маневри і користування телефоном під час руху знижують оцінку.")
+                Text("Кожна поїздка починається зі 100 балів. Різкі маневри і користування телефоном під час руху знижують оцінку. Вхідний дзвінок і розмова через гучний звʼязок, гарнітуру чи CarPlay не штрафуються, а розмова з телефоном біля вуха вважається відволіканням.")
             }
 
             Section {

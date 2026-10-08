@@ -33,6 +33,11 @@ nonisolated enum VeloxConfig {
     static let distractionGracePeriod: TimeInterval = 3.0
     // Мінімальний інтервал між двома штрафами за відволікання, с
     static let distractionCooldown: TimeInterval = 1.5
+    // Тривале відволікання: додатковий штраф за кожні distractionDurationStep секунд
+    // з телефоном у руках, але не більше distractionDurationPenaltyMax за одне відволікання
+    static let distractionDurationStep: TimeInterval = 10.0
+    static let distractionDurationPenalty: Int = 1
+    static let distractionDurationPenaltyMax: Int = 5
 
     // MARK: Safety Score
 
@@ -50,4 +55,6 @@ nonisolated enum VeloxConfig {
     static let recalibrationHold: TimeInterval = 2.0
     // Ручне: дозволене лише коли швидкість менша за цю, м/с (~7 км/год)
     static let manualRecalibrationMaxSpeed: Double = 2.0
+    // Невдале перекалібрування під час поїздки повторюється через цей час, с
+    static let recalibrationRetryDelay: TimeInterval = 5.0
 }

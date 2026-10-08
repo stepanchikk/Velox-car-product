@@ -21,6 +21,9 @@ nonisolated struct TripStats: Hashable, Sendable {
     var hardBrakings: Int?
     var hardAccelerations: Int?
     var distractions: Int?
+    // Сумарний час з телефоном у руках (від Distraction до DistractionEnd);
+    // nil для файлів версій, які тривалість не записували
+    var distractionSeconds: Double?
     // Останнє значення колонки Score; для файлів без неї - розрахунок за подіями
     var score: Int?
     // Відстань за швидкістю GPS; nil, якщо швидкості в файлі немає
@@ -66,6 +69,9 @@ nonisolated enum TripCSVParser {
         var stats = TripStats()
         stats.metadata = metadata.isEmpty ? nil : metadata
         var brakings = 0, accelerations = 0, distractions = 0
+        var distractionSeconds = 0.0
+        var distractionOpenedAt: Double?
+        var hasDurationEvents = metadata["distractionDurationStep"] != nil
         var lastScore: Int?
         var distance = 0.0
         var hasSpeed = false
@@ -86,14 +92,23 @@ nonisolated enum TripCSVParser {
             switch event {
             case "HardBraking": brakings += 1
             case "HardAcceleration": accelerations += 1
-            case "Distraction": distractions += 1
+            case "Distraction", "DistractionResume":
+                if event == "Distraction" { distractions += 1 }
+                if distractionOpenedAt == nil { distractionOpenedAt = time }
+            case "DistractionEnd":
+                hasDurationEvents = true
+                if let openedAt = distractionOpenedAt {
+                    distractionSeconds += max(0, time - openedAt)
+                    distractionOpenedAt = nil
+                }
             case "CalibrationDone": stats.calibration = .gps
             case "CalibrationDoneFallback": stats.calibration = .fallback
             default: break
             }
 
-            // Службові рядки повторюють останні значення і вимірами не є
-            if event == "Distraction" || event.hasPrefix("Calibration") {
+            // Службові рядки (відволікання, калібрування, дзвінки) повторюють
+            // останні значення і вимірами не є
+            if event.hasPrefix("Distraction") || event.hasPrefix("Calibration") || event.hasPrefix("Call") {
                 continue
             }
             stats.samples += 1
@@ -118,6 +133,7 @@ nonisolated enum TripCSVParser {
             stats.hardAccelerations = accelerations
             stats.distractions = distractions
         }
+        stats.distractionSeconds = hasDurationEvents ? distractionSeconds : nil
         if let lastScore = lastScore {
             stats.score = lastScore
         } else if iEvent != nil {

@@ -112,6 +112,59 @@ final class DistractionPolicyTests: XCTestCase {
     }
 }
 
+final class DistractionTrackerTests: XCTestCase {
+
+    func testDurationPenaltyAndResume() throws {
+        var tracker = DistractionTracker(policy: DistractionPolicy(gracePeriod: 3.0, cooldown: 1.5))
+        XCTAssertEqual(tracker.begin(at: 2.0), .ignored)              // перші 3 с після старту
+        XCTAssertNil(tracker.end(at: 2.5))                            // нічого не тривало
+
+        XCTAssertEqual(tracker.begin(at: 10.0), .counted)
+        XCTAssertEqual(tracker.begin(at: 10.2), .alreadyActive)
+        let first = try XCTUnwrap(tracker.end(at: 10.4))
+        XCTAssertEqual(first.duration, 0.4, accuracy: 1e-9)
+        XCTAssertEqual(first.addedPenalty, 0)
+
+        // Знову вийшов через 1 с після початку попереднього: те саме відволікання,
+        // штраф за тривалість рахується за сумарні 19.4 с
+        XCTAssertEqual(tracker.begin(at: 11.0), .resumed)
+        XCTAssertEqual(tracker.end(at: 30.0)?.addedPenalty, 1)
+
+        // Нове відволікання на хвилину: штраф за тривалість не більше 5
+        XCTAssertEqual(tracker.begin(at: 40.0), .counted)
+        XCTAssertEqual(tracker.end(at: 100.0)?.addedPenalty, 5)
+
+        XCTAssertEqual(tracker.durationPenalty, 6)
+        XCTAssertEqual(tracker.totalDuration, 79.4, accuracy: 1e-9)
+        XCTAssertFalse(tracker.isActive)
+
+        tracker.reset()
+        XCTAssertEqual(tracker.durationPenalty, 0)
+        XCTAssertEqual(tracker.totalDuration, 0)
+    }
+
+    func testDurationPenaltySteps() {
+        XCTAssertEqual(SafetyScoreCalculator.durationPenalty(for: 0), 0)
+        XCTAssertEqual(SafetyScoreCalculator.durationPenalty(for: 9.9), 0)
+        XCTAssertEqual(SafetyScoreCalculator.durationPenalty(for: 10), 1)
+        XCTAssertEqual(SafetyScoreCalculator.durationPenalty(for: 25), 2)
+        XCTAssertEqual(SafetyScoreCalculator.durationPenalty(for: 300), 5)   // обмеження
+    }
+
+    func testCallPolicy() {
+        // Без дзвінка вихід із застосунку - відволікання
+        XCTAssertEqual(CallPolicy.cause(for: .none, callWasActive: false), .distraction)
+        // Екран вхідного дзвінка відкрила система
+        XCTAssertEqual(CallPolicy.cause(for: .incomingRinging, callWasActive: false), .incomingCall)
+        // Розмова почалась через гарнітуру чи CarPlay
+        XCTAssertEqual(CallPolicy.cause(for: .active(handheld: false), callWasActive: false), .handsFreeCall)
+        // Телефон біля вуха
+        XCTAssertEqual(CallPolicy.cause(for: .active(handheld: true), callWasActive: false), .distraction)
+        // Розмова вже йшла, а водій відкрив інший застосунок
+        XCTAssertEqual(CallPolicy.cause(for: .active(handheld: false), callWasActive: true), .distraction)
+    }
+}
+
 // MARK: - Зміна положення телефона
 
 final class OrientationChangeDetectorTests: XCTestCase {
@@ -152,6 +205,8 @@ final class SafetyScoreTests: XCTestCase {
         XCTAssertEqual(SafetyScoreCalculator.score(maneuvers: 0, distractions: 4), 80)
         XCTAssertEqual(SafetyScoreCalculator.score(maneuvers: 5, distractions: 3), 75)
         XCTAssertEqual(SafetyScoreCalculator.score(maneuvers: 40, distractions: 10), 0)   // не менше 0
+        // 1 маневр, 1 відволікання на 25 с: 100 - 2 - 5 - 2
+        XCTAssertEqual(SafetyScoreCalculator.score(maneuvers: 1, distractions: 1, durationPenalty: 2), 91)
     }
 
     func testClassBoundaries() {
@@ -301,6 +356,30 @@ final class TripMetadataTests: XCTestCase {
     func testFileWithOnlyMetadataIsNotATrip() {
         XCTAssertNil(TripCSVParser.parse("# format=2\n# app=1.0\n"))
     }
+
+    // Тривалість відволікань і службові рядки дзвінків
+    func testDistractionDurationAndCallRows() throws {
+        let csv = """
+        Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg,Score,Speed_mps
+        0.0,0,Калібрування...,CalibrationStart,0,0,0,0,0,100,
+        2.0,0,Запис іде,CalibrationDone,0,0,0,0,0,100,
+        2.1,0,Запис іде,,0,0,0,0,0,100,
+        10.0,0,Відволікання!,Distraction,0,0,0,0,0,95,
+        10.4,0,Відволікання!,DistractionEnd,0,0,0,0,0,95,
+        11.0,0,Відволікання!,DistractionResume,0,0,0,0,0,95,
+        30.0,0,Відволікання!,DistractionEnd,0,0,0,0,0,94,
+        31.0,0,Запис іде,,0,0,0,0,0,94,
+        40.0,0,Дзвінок,CallIncoming,0,0,0,0,0,94,
+        50.0,0,Дзвінок,CallStart,0,0,0,0,0,94,
+        60.0,0,Дзвінок,CallEnd,0,0,0,0,0,94,
+        61.0,0,Запис іде,,0,0,0,0,0,94,
+        """
+        let stats = try XCTUnwrap(TripCSVParser.parse(csv))
+        XCTAssertEqual(stats.samples, 3)                     // службові рядки не рахуються
+        XCTAssertEqual(stats.distractions, 1)                // продовження - не нове відволікання
+        XCTAssertEqual(try XCTUnwrap(stats.distractionSeconds), 19.4, accuracy: 1e-9)
+        XCTAssertEqual(stats.score, 94)
+    }
 }
 
 // MARK: - Вектори
@@ -424,6 +503,32 @@ final class OrientationCalibratorTests: XCTestCase {
         assertVector(result.up, Vector3(x: 0, y: 0, z: 1))
         assertVector(result.forward, Vector3(x: 0, y: 1, z: 0))   // запасний варіант: вісь Y
         XCTAssertEqual(result.forwardSource, .fallbackFlatMount)
+    }
+
+    // Перекалібрування в русі: вібрація 0.1 G не зриває фазу вертикалі
+    func testRecalibrationInMotionToleratesVibration() {
+        let shake = Vector3(x: 0.06, y: 0.05, z: 0.06)    // ~0.1 G
+        let feed = { (cal: OrientationCalibrator) -> CalibrationOutcome in
+            var outcome: CalibrationOutcome = .calibratingUp(0)
+            for i in 0..<20 {
+                outcome = cal.feedMotion(gravity: self.flat, userAcceleration: shake,
+                                         rotationRate: Vector3(x: 0, y: 0, z: 0.15), time: Double(i) * 0.1)
+            }
+            return outcome
+        }
+
+        let strict = OrientationCalibrator()
+        strict.reset(locationAvailable: false)
+        guard case .calibratingUp = feed(strict) else {
+            return XCTFail("на старті вібрація має перезапускати відлік спокою")
+        }
+
+        let relaxed = OrientationCalibrator()
+        relaxed.reset(locationAvailable: false, inMotion: true)
+        guard case .finished(let result) = feed(relaxed) else {
+            return XCTFail("у русі 2 с без обертання телефона достатньо")
+        }
+        assertVector(result.up, Vector3(x: 0, y: 0, z: 1))
     }
 
     func testMovementRestartsStillnessCount() {

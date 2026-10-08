@@ -3,6 +3,8 @@ import CoreMotion
 import CoreLocation
 import Combine
 import UIKit
+import CallKit
+import AVFoundation
 
 // Стан сесії, який бачить користувач і який записується в колонку State.
 // Тексти збігаються з попередніми версіями, щоб старі CSV аналізувались так само.
@@ -11,6 +13,7 @@ enum SessionState: Equatable {
     case calibrating
     case recording
     case distracted
+    case onCall
 
     var title: String {
         switch self {
@@ -18,6 +21,7 @@ enum SessionState: Equatable {
         case .calibrating: return "Калібрування..."
         case .recording: return "Запис іде"
         case .distracted: return "Відволікання!"
+        case .onCall: return "Дзвінок"
         }
     }
 }
@@ -49,13 +53,16 @@ enum LocationAccess: Equatable {
 /// Керуючий клас сесії запису. Отримує дані від сенсорів і системи, передає їх
 /// спеціалізованим компонентам і публікує стан для інтерфейсу:
 /// - OrientationCalibrator - калібрування орієнтації (OrientationCalibrator.swift);
-/// - LowPassFilter, ManeuverDetector, DistractionPolicy, OrientationChangeDetector
+/// - LowPassFilter, ManeuverDetector, DistractionTracker (з DistractionPolicy),
+///   CallPolicy, OrientationChangeDetector
 ///   - обробка сигналу і виявлення подій (EventDetectors.swift);
 /// - SafetyScoreCalculator - модель штрафів (SafetyScore.swift);
 /// - TripCSVWriter - запис поїздки у файл (TripCSVWriter.swift).
-class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCallObserverDelegate {
     private let motionManager = CMMotionManager()
     private let locationManager = CLLocationManager()
+    // Телефонні дзвінки: вхідний дзвінок і розмова без рук не є відволіканням
+    private let callObserver = CXCallObserver()
 
     // Поріг перевантаження (також використовується в TrackerView для підсвічування)
     static let maneuverThreshold: Double = VeloxConfig.maneuverThreshold
@@ -82,12 +89,17 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var hardBrakingCount: Int = 0
     @Published var hardAccelerationCount: Int = 0
     @Published var distractionCount: Int = 0
+    // Сумарний час з телефоном у руках і штраф за тривалість (оновлюються,
+    // коли водій повертається до застосунку)
+    @Published private(set) var distractionSeconds: TimeInterval = 0
+    @Published private(set) var distractionDurationPenalty: Int = 0
     @Published var phoneState: SessionState = .idle
 
     // Обчислюється з лічильників, тому завжди узгоджений з ними
     var safetyScore: Int {
         SafetyScoreCalculator.score(maneuvers: hardBrakingCount + hardAccelerationCount,
-                                    distractions: distractionCount)
+                                    distractions: distractionCount,
+                                    durationPenalty: distractionDurationPenalty)
     }
 
     // Повідомлення для користувача (помилки та підтвердження)
@@ -108,9 +120,21 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var filter = LowPassFilter(alpha: SensorManager.filterAlpha)
     private var maneuverDetector = ManeuverDetector(threshold: SensorManager.maneuverThreshold,
                                                     cooldown: VeloxConfig.maneuverCooldown)
-    private var distractionPolicy = DistractionPolicy()
+    private var distractionTracker = DistractionTracker()
     private var orientationDetector = OrientationChangeDetector()
     private let csvWriter = TripCSVWriter()
+
+    // Втрата активності, яку ще не класифіковано (див. handleFocusLost)
+    private var pendingFocusLoss: (time: TimeInterval, callWasActive: Bool)?
+    // Дзвінок триває (записано CallIncoming або CallStart, ще немає CallEnd)
+    private var callInProgress = false
+    // Відволікання почалось через розмову з телефоном біля вуха
+    private var handheldCallEpisode = false
+
+    // Калібрування в цій поїздці вже вдавалось: далі йдуть перекалібрування в русі
+    private var hasCalibrated = false
+    // Час сесії, коли повторити невдале перекалібрування
+    private var retryCalibrationAt: TimeInterval?
 
     private var forwardPhaseLogged = false
     // Після системного діалогу дозволу запис стартує автоматично
@@ -143,6 +167,18 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
         // Застосунок пішов у фон: iOS може його вивантажити, тому скидаємо буфер у файл
         NotificationCenter.default.addObserver(self, selector: #selector(appEnteredBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+
+        // Дзвінки і зміна аудіовиходу (динамік біля вуха, гучний звʼязок, Bluetooth, CarPlay)
+        callObserver.setDelegate(self, queue: DispatchQueue.main)
+        // Це сповіщення надходить у фоновому потоці, тому обробник ставиться
+        // в головну чергу. Посилання на self слабке: після звільнення об'єкта
+        // обробник нічого не робить (SensorManager живе весь час роботи застосунку)
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.updateCallState()
+            }
+        }
 
         locationManager.delegate = self
         locationManager.activityType = .automotiveNavigation
@@ -236,18 +272,67 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
 
+    // Штрафів немає лише під час першого калібрування поїздки (водій щойно
+    // натиснув «Старт»). Перекалібрування в русі не звільняє від штрафу.
+    private var distractionsPaused: Bool {
+        isCalibrating && !hasCalibrated
+    }
+
     private func handleFocusLost() {
-        // Під час калібрування штрафів немає
-        guard isRecording, !isCalibrating else { return }
-        let now = sessionTime()
-        guard distractionPolicy.register(at: now) else { return }
+        guard isRecording, !distractionsPaused, pendingFocusLoss == nil else { return }
+        // Екран вхідного дзвінка відкривається трохи раніше, ніж CallKit повідомляє
+        // про дзвінок, тому причину визначаємо з невеликою затримкою, а час
+        // відволікання беремо з моменту втрати активності
+        pendingFocusLoss = (sessionTime(), callInProgress)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.resolvePendingFocusLoss()
+        }
+    }
 
-        distractionCount += 1
-        phoneState = .distracted
+    // Викликається таймером або поверненням у застосунок, залежно від того, що раніше
+    private func resolvePendingFocusLoss() {
+        guard let pending = pendingFocusLoss else { return }
+        pendingFocusLoss = nil
+        guard isRecording else { return }
 
-        // Пишемо подію в CSV одразу, а не чекаємо наступного виміру
-        appendEventRow(event: "Distraction", time: now)
-        triggerHapticFeedback(style: .error)
+        switch CallPolicy.cause(for: currentCallState, callWasActive: pending.callWasActive) {
+        case .incomingCall:
+            appendEventRow(event: "CallIncoming", time: pending.time)
+            // Дзвінок відкрито: CallEnd запишеться, коли дзвінків не залишиться
+            // (навіть якщо iOS призупинила застосунок на час розмови)
+            callInProgress = true
+            phoneState = .onCall
+        case .handsFreeCall:
+            updateCallState()
+        case .distraction:
+            beginDistraction(at: pending.time)
+        }
+    }
+
+    private func beginDistraction(at time: TimeInterval) {
+        switch distractionTracker.begin(at: time) {
+        case .counted:
+            distractionCount += 1
+            phoneState = .distracted
+            // Пишемо подію в CSV одразу, а не чекаємо наступного виміру
+            appendEventRow(event: "Distraction", time: time)
+            triggerHapticFeedback(style: .error)
+        case .resumed:
+            phoneState = .distracted
+            appendEventRow(event: "DistractionResume", time: time)
+        case .ignored, .alreadyActive:
+            break
+        }
+    }
+
+    // Водій повернувся: фіксуємо тривалість і штраф за неї (у рядку
+    // DistractionEnd колонка Score вже враховує цей штраф)
+    private func endDistraction(at time: TimeInterval, stopOnError: Bool = true) {
+        guard distractionTracker.end(at: time) != nil else { return }
+        handheldCallEpisode = false
+        distractionSeconds = distractionTracker.totalDuration
+        distractionDurationPenalty = distractionTracker.durationPenalty
+        appendRow(event: "DistractionEnd", time: time, isSample: false, stopOnError: stopOnError)
     }
 
     @objc private func appEnteredBackground() {
@@ -258,10 +343,87 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     @objc private func appGainedFocus() {
+        DispatchQueue.main.async { [weak self] in
+            self?.handleFocusGained()
+        }
+    }
+
+    private func handleFocusGained() {
         guard isRecording else { return }
+        resolvePendingFocusLoss()
+        // Відволікання через розмову біля вуха закінчується разом із розмовою
+        if !handheldCallEpisode {
+            endDistraction(at: sessionTime())
+        }
+        updateCallState()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            guard let self = self, self.isRecording, !self.isCalibrating else { return }
-            self.phoneState = .recording
+            guard let self = self, self.isRecording, !self.distractionTracker.isActive else { return }
+            if self.isCalibrating || self.calibration == nil {
+                self.phoneState = .calibrating
+            } else {
+                self.phoneState = self.callInProgress ? .onCall : .recording
+            }
+        }
+    }
+
+    // MARK: - Дзвінки (CallKit)
+
+    // Звук розмови йде в динамік біля вуха: телефон у руці
+    private var isReceiverRoute: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .builtInReceiver }
+    }
+
+    private var currentCallState: CallState {
+        let calls = callObserver.calls.filter { !$0.hasEnded }
+        guard !calls.isEmpty else { return .none }
+        if calls.contains(where: { $0.hasConnected || $0.isOutgoing }) {
+            return .active(handheld: isReceiverRoute)
+        }
+        return .incomingRinging
+    }
+
+    // Делегат викликається в головній черзі (див. init)
+    func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
+        updateCallState()
+    }
+
+    // Звіряє стан дзвінка із записаним: початок і кінець розмови, телефон біля вуха
+    private func updateCallState() {
+        guard isRecording else {
+            callInProgress = false
+            return
+        }
+        let now = sessionTime()
+        switch currentCallState {
+        case .none, .incomingRinging:
+            guard callInProgress else { return }
+            callInProgress = false
+            if handheldCallEpisode {
+                endDistraction(at: now)
+            }
+            appendEventRow(event: "CallEnd", time: now)
+            if phoneState == .onCall {
+                phoneState = .recording
+            }
+        case .active(let handheld):
+            if !callInProgress {
+                callInProgress = true
+                appendEventRow(event: handheld ? "CallStart_Handheld" : "CallStart", time: now)
+                if phoneState != .distracted, !isCalibrating {
+                    phoneState = .onCall
+                }
+            }
+            // Розмова з телефоном біля вуха - відволікання (поки звук не перемкнули
+            // на гучний звʼязок чи гарнітуру)
+            if handheld, !distractionTracker.isActive, !distractionsPaused {
+                beginDistraction(at: now)
+                handheldCallEpisode = distractionTracker.isActive
+            } else if !handheld, handheldCallEpisode {
+                endDistraction(at: now)
+                if phoneState == .distracted {
+                    phoneState = .onCall
+                }
+            }
         }
     }
 
@@ -344,9 +506,12 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         startTime = Date()
         startUptime = ProcessInfo.processInfo.systemUptime
         maneuverDetector.reset()
-        distractionPolicy.reset()
         orientationDetector.reset()
         calibration = nil
+        hasCalibrated = false
+        retryCalibrationAt = nil
+        pendingFocusLoss = nil
+        callInProgress = false
         lastRawLongitudinal = 0.0
         lastUserAcceleration = Vector3.zero
         lastKnownSpeed = 0.0
@@ -373,6 +538,15 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     func stopRecording(reason: String? = nil) {
         guard isRecording else { return }
+        // Відволікання, що ще триває, закривається моментом зупинки
+        let stopTime = sessionTime()
+        pendingFocusLoss = nil
+        endDistraction(at: stopTime, stopOnError: false)
+        if callInProgress {
+            appendRow(event: "CallEnd", time: stopTime, isSample: false, stopOnError: false)
+            callInProgress = false
+        }
+        retryCalibrationAt = nil
         isRecording = false
         isCalibrating = false
         calibration = nil
@@ -429,6 +603,10 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         hardBrakingCount = 0
         hardAccelerationCount = 0
         distractionCount = 0
+        distractionTracker.reset()
+        handheldCallEpisode = false
+        distractionSeconds = 0
+        distractionDurationPenalty = 0
         filter.reset()
         currentGForceY = 0.0
 
@@ -459,7 +637,9 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private func beginCalibration(event: String) {
         setLocationPrecision(forCalibration: true)
-        calibrator.reset(locationAvailable: locationAuthorized)
+        // Перекалібрування під час поїздки: авто може їхати, вимоги до спокою мʼякші
+        calibrator.reset(locationAvailable: locationAuthorized, inMotion: hasCalibrated)
+        retryCalibrationAt = nil
         forwardPhaseLogged = false
         isCalibrating = true
         calibrationProgress = 0.0
@@ -485,13 +665,27 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             finishCalibration(result)
         case .failed(let message):
             isCalibrating = false
-            stopRecording(reason: "Калібрування не вдалося: " + message)
+            guard hasCalibrated else {
+                // На старті водій поруч із телефоном і може виправити причину сам
+                stopRecording(reason: "Калібрування не вдалося: " + message)
+                return
+            }
+            // Перекалібрування в русі: поїздку не зупиняємо, а пробуємо ще раз.
+            // Поки калібрування немає, виміри не пишуться, але відволікання рахуються.
+            calibration = nil
+            calibrationProgress = 0.0
+            let delay = Int(VeloxConfig.recalibrationRetryDelay)
+            calibrationInfo = "Повторне калібрування через \(delay) с. \(message)"
+            phoneState = .calibrating
+            appendEventRow(event: "CalibrationFailed")
+            retryCalibrationAt = sessionTime() + VeloxConfig.recalibrationRetryDelay
         }
     }
 
     private func finishCalibration(_ result: CalibrationResult) {
         setLocationPrecision(forCalibration: false)
         calibration = result
+        hasCalibrated = true
         isCalibrating = false
         calibrationProgress = 1.0
         // Осі змінились, тому фільтр починає з нуля
@@ -545,7 +739,13 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             return
         }
 
-        guard let calibration = calibration else { return }
+        guard let calibration = calibration else {
+            // Невдале перекалібрування: чекаємо паузу і пробуємо знову
+            if let retryAt = retryCalibrationAt, time >= retryAt {
+                beginCalibration(event: "CalibrationStart_Retry")
+            }
+            return
+        }
 
         // Кардинальна зміна положення телефона: калібруємо заново
         if orientationDetector.update(gravity: gravity, calibratedUp: calibration.up, time: time) {
@@ -579,7 +779,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         appendRow(event: event, time: time ?? sessionTime(), isSample: false)
     }
 
-    private func appendRow(event: String, time: TimeInterval, isSample: Bool) {
+    /// stopOnError = false - під час зупинки: помилку запису покаже finish()
+    private func appendRow(event: String, time: TimeInterval, isSample: Bool, stopOnError: Bool = true) {
         let row = TelemetryRow(time: time,
                                filtered: currentGForceY,
                                state: phoneState.title,
@@ -589,7 +790,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                                tiltDegrees: orientationDetector.lastAngle,
                                score: safetyScore,
                                speed: freshSpeed)
-        if let error = csvWriter.append(row, isSample: isSample) {
+        if let error = csvWriter.append(row, isSample: isSample), stopOnError {
             stopRecording(reason: error)
         }
     }

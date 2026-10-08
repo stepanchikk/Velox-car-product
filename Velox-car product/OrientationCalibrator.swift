@@ -196,6 +196,12 @@ nonisolated final class OrientationCalibrator {
     static let requiredStableSamples = 20
     static let maxUserAcceleration = 0.05
     static let maxRotationRate = 0.2
+    // Перекалібрування під час поїздки: авто може їхати, тому вібрація дороги,
+    // розгони і повороти не повинні зривати фазу вертикалі. Сила тяжіння від
+    // CoreMotion уже очищена від лінійного прискорення (злиття з гіроскопом),
+    // тож достатньо, щоб телефон не крутили в руках.
+    static let maxUserAccelerationInMotion = 0.3
+    static let maxRotationRateInMotion = 0.35
     static let upTimeout: TimeInterval = 8.0
     private static let maxSampleGap: TimeInterval = 1.0
 
@@ -214,8 +220,11 @@ nonisolated final class OrientationCalibrator {
     // від "замало розгонів")
     private var locationUpdates = 0
     private var locationAvailable = true
+    private var inMotion = false
 
-    func reset(locationAvailable: Bool) {
+    /// inMotion = true для перекалібрування під час поїздки (послаблені вимоги до спокою)
+    func reset(locationAvailable: Bool, inMotion: Bool = false) {
+        self.inMotion = inMotion
         phase = .up
         stableGravity.removeAll()
         recentGravity.removeAll()
@@ -295,8 +304,9 @@ nonisolated final class OrientationCalibrator {
         lastSampleTime = time
         if upStartTime == nil { upStartTime = time }
 
-        let isStable = userAcceleration.length < Self.maxUserAcceleration
-            && rotationRate.length < Self.maxRotationRate
+        let maxAcceleration = inMotion ? Self.maxUserAccelerationInMotion : Self.maxUserAcceleration
+        let maxRotation = inMotion ? Self.maxRotationRateInMotion : Self.maxRotationRate
+        let isStable = userAcceleration.length < maxAcceleration && rotationRate.length < maxRotation
 
         if isStable {
             stableGravity.append(gravity)

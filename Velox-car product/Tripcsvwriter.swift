@@ -89,12 +89,16 @@ nonisolated struct TripMetadata: Hashable, Sendable {
             ("maneuverCooldown", VeloxConfig.maneuverCooldown),
             ("distractionGracePeriod", VeloxConfig.distractionGracePeriod),
             ("distractionCooldown", VeloxConfig.distractionCooldown),
+            ("distractionDurationStep", VeloxConfig.distractionDurationStep),
+            ("distractionDurationPenalty", Double(VeloxConfig.distractionDurationPenalty)),
+            ("distractionDurationPenaltyMax", Double(VeloxConfig.distractionDurationPenaltyMax)),
             ("maneuverPenalty", Double(VeloxConfig.maneuverPenalty)),
             ("distractionPenalty", Double(VeloxConfig.distractionPenalty)),
             ("safeScoreMin", Double(VeloxConfig.safeScoreMin)),
             ("mediumScoreMin", Double(VeloxConfig.mediumScoreMin)),
             ("recalibrationAngle", VeloxConfig.recalibrationAngle),
             ("recalibrationHold", VeloxConfig.recalibrationHold),
+            ("recalibrationRetryDelay", VeloxConfig.recalibrationRetryDelay),
         ]
     }
 

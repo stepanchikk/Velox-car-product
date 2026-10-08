@@ -105,6 +105,116 @@ nonisolated struct DistractionPolicy {
     }
 }
 
+/// Відволікання з тривалістю. begin - водій почав користуватися телефоном
+/// (застосунок втратив активність або телефон біля вуха під час дзвінка),
+/// end - повернувся. Кожне відволікання штрафується одразу (DistractionPolicy),
+/// а після завершення додається штраф за тривалість. Повторна втрата активності
+/// одразу після попередньої (у межах паузи DistractionPolicy) вважається
+/// продовженням того самого відволікання, тому штраф за тривалість рахується
+/// за сумарний час, а не окремо за кожен шматок.
+nonisolated struct DistractionTracker {
+    nonisolated enum Start: Equatable {
+        case counted        // нове відволікання, штраф
+        case resumed        // продовження попереднього, без нового штрафу
+        case ignored        // перші секунди після старту
+        case alreadyActive  // уже триває
+    }
+
+    nonisolated struct End: Equatable {
+        let duration: TimeInterval   // тривалість цього шматка
+        let addedPenalty: Int        // доданий штраф за тривалість
+    }
+
+    private var policy: DistractionPolicy
+    private(set) var activeSince: TimeInterval?
+    private var hasEpisode = false
+    private var episodeDuration: TimeInterval = 0
+    private var episodePenalty = 0
+    // Сумарний час з телефоном у руках і сумарний штраф за тривалість
+    private(set) var totalDuration: TimeInterval = 0
+    private(set) var durationPenalty = 0
+
+    init(policy: DistractionPolicy = DistractionPolicy()) {
+        self.policy = policy
+    }
+
+    var isActive: Bool { activeSince != nil }
+
+    mutating func begin(at time: TimeInterval) -> Start {
+        guard activeSince == nil else { return .alreadyActive }
+        if policy.register(at: time) {
+            activeSince = time
+            hasEpisode = true
+            episodeDuration = 0
+            episodePenalty = 0
+            return .counted
+        }
+        // Не зараховано лише через паузу після попереднього: це те саме відволікання
+        if hasEpisode, time > policy.gracePeriod {
+            activeSince = time
+            return .resumed
+        }
+        return .ignored
+    }
+
+    mutating func end(at time: TimeInterval) -> End? {
+        guard let since = activeSince else { return nil }
+        activeSince = nil
+        let duration = max(0, time - since)
+        episodeDuration += duration
+        totalDuration += duration
+        let target = SafetyScoreCalculator.durationPenalty(for: episodeDuration)
+        let added = max(0, target - episodePenalty)
+        episodePenalty = target
+        durationPenalty += added
+        return End(duration: duration, addedPenalty: added)
+    }
+
+    mutating func reset() {
+        policy.reset()
+        activeSince = nil
+        hasEpisode = false
+        episodeDuration = 0
+        episodePenalty = 0
+        totalDuration = 0
+        durationPenalty = 0
+    }
+}
+
+// MARK: - Дзвінки
+
+/// Стан телефонного дзвінка з погляду Anti-Fraud (джерело - CXCallObserver)
+nonisolated enum CallState: Equatable {
+    case none
+    // Вхідний дзвінок ще не прийнято: екран дзвінка відкрила система, а не водій
+    case incomingRinging
+    // Розмова (або вихідний набір); handheld - звук іде в динамік біля вуха
+    case active(handheld: Bool)
+}
+
+nonisolated enum FocusLossCause: Equatable {
+    case distraction     // водій сам відкрив інший застосунок
+    case incomingCall    // систему перекрив екран вхідного дзвінка
+    case handsFreeCall   // розмова через гучний звʼязок, гарнітуру чи CarPlay
+}
+
+/// Чи вважати втрату активності застосунку відволіканням з огляду на дзвінок.
+/// callWasActive - розмова вже йшла, коли застосунок був активним: тоді вихід
+/// з Velox - це дія водія (наприклад, відкрив повідомлення під час розмови
+/// через гучний звʼязок), і дзвінок його не виправдовує.
+nonisolated enum CallPolicy {
+    static func cause(for call: CallState, callWasActive: Bool) -> FocusLossCause {
+        switch call {
+        case .none:
+            return .distraction
+        case .incomingRinging:
+            return .incomingCall
+        case .active(let handheld):
+            return handheld || callWasActive ? .distraction : .handsFreeCall
+        }
+    }
+}
+
 // MARK: - Зміна положення телефона
 
 /// Виявляє кардинальну зміну нахилу телефона відносно калібрування
