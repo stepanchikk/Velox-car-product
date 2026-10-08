@@ -57,6 +57,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // Ручне перекалібрування дозволене лише "майже на стоянці" (безпека:
     // не заохочуємо водія натискати кнопки під час руху)
     private static let manualRecalibrationMaxSpeed: Double = 2.0  // м/с (~7 км/год)
+    // Швидкість GPS старша за цей час вважається невідомою (тунель, паркінг)
+    private static let speedMaxAge: TimeInterval = 3.0
 
     // isRecording = сесія активна (калібрування або запис)
     @Published var isRecording = false
@@ -64,6 +66,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var calibrationProgress: Double = 0.0
     @Published var calibrationInfo: String = ""
     @Published var lastKnownSpeed: Double = 0.0
+    // Момент останнього коректного оновлення швидкості (секунди сесії)
+    private var lastSpeedTime: TimeInterval = -.infinity
 
     // Поздовжнє прискорення після калібрування (відфільтроване)
     @Published var currentGForceY: Double = 0.0
@@ -130,8 +134,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(appEnteredBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
 
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         locationManager.activityType = .automotiveNavigation
+        // Інакше на довгій зупинці iOS може призупинити оновлення і сама їх
+        // не відновить: решта поїздки залишилась би без швидкості GPS
+        locationManager.pausesLocationUpdatesAutomatically = false
+        setLocationPrecision(forCalibration: true)
         // Дозвіл не запитуємо одразу: лише при першому «Старт», з поясненням навіщо
         locationStatus = currentLocationAccess()
     }
@@ -181,7 +188,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard time > -1.0 else { return }
 
         let speed = location.speed
-        lastKnownSpeed = max(speed, 0)
+        // speed < 0 означає, що iOS не змогла визначити швидкість
+        if speed >= 0 {
+            lastKnownSpeed = speed
+            lastSpeedTime = time
+        }
 
         guard isCalibrating else { return }
         if let outcome = calibrator.feedLocation(speed: speed, speedAccuracy: location.speedAccuracy, time: time) {
@@ -324,6 +335,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastRawLongitudinal = 0.0
         lastUserAcceleration = Vector3.zero
         lastKnownSpeed = 0.0
+        lastSpeedTime = -.infinity
 
         if locationAuthorized {
             locationManager.startUpdatingLocation()
@@ -402,7 +414,26 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     // MARK: - Калібрування
 
+    // MARK: - Енергоспоживання GPS
+
+    // Режим BestForNavigation (максимальна точність і злиття з іншими сенсорами)
+    // потрібен лише для калібрування напряму руху. Під час запису швидкість
+    // потрібна для колонки Speed_mps і блокування ручного перекалібрування в русі;
+    // для цього вистачає NearestTenMeters, що витрачає помітно менше енергії.
+    private func setLocationPrecision(forCalibration: Bool) {
+        locationManager.desiredAccuracy = forCalibration
+            ? kCLLocationAccuracyBestForNavigation
+            : kCLLocationAccuracyNearestTenMeters
+    }
+
+    // Швидкість для CSV: nil, якщо GPS давно мовчить (порожнє значення в колонці
+    // краще за застаріле: analyzer.py пропускає порожні значення)
+    private var freshSpeed: Double? {
+        sessionTime() - lastSpeedTime <= Self.speedMaxAge ? lastKnownSpeed : nil
+    }
+
     private func beginCalibration(event: String) {
+        setLocationPrecision(forCalibration: true)
         calibrator.reset(locationAvailable: locationAuthorized)
         forwardPhaseLogged = false
         isCalibrating = true
@@ -434,6 +465,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     private func finishCalibration(_ result: CalibrationResult) {
+        setLocationPrecision(forCalibration: false)
         calibration = result
         isCalibrating = false
         calibrationProgress = 1.0
@@ -531,7 +563,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                                userAcceleration: lastUserAcceleration,
                                tiltDegrees: orientationDetector.lastAngle,
                                score: safetyScore,
-                               speed: lastKnownSpeed)
+                               speed: freshSpeed)
         if let error = csvWriter.append(row, isSample: isSample) {
             stopRecording(reason: error)
         }

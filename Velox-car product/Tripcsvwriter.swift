@@ -10,12 +10,13 @@ nonisolated struct TelemetryRow {
     let userAcceleration: Vector3   // Ax, Ay, Az, G
     let tiltDegrees: Double         // Tilt_deg
     let score: Int                  // Score
-    let speed: Double               // Speed_mps
+    let speed: Double?              // Speed_mps (nil: GPS немає або дані застарілі)
 
     var csvLine: String {
         let safeState = state.replacingOccurrences(of: ",", with: "")
         let a = userAcceleration
-        return "\(time),\(filtered),\(safeState),\(event),\(raw),\(a.x),\(a.y),\(a.z),\(tiltDegrees),\(score),\(speed)"
+        let speedText = speed.map { "\($0)" } ?? ""
+        return "\(time),\(filtered),\(safeState),\(event),\(raw),\(a.x),\(a.y),\(a.z),\(tiltDegrees),\(score),\(speedText)"
     }
 }
 

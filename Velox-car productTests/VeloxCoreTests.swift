@@ -186,6 +186,14 @@ final class TripCSVWriterTests: XCTestCase {
         XCTAssertEqual(String(line[2]), "Запис іде")   // кома зі стану прибрана
     }
 
+    func testMissingSpeedLeavesEmptyLastColumn() {
+        let r = TelemetryRow(time: 1, filtered: 0, state: "Запис іде", event: "", raw: 0,
+                             userAcceleration: .zero, tiltDegrees: 0, score: 100, speed: nil)
+        let fields = r.csvLine.split(separator: ",", omittingEmptySubsequences: false)
+        XCTAssertEqual(fields.count, 11)
+        XCTAssertEqual(String(fields[10]), "")
+    }
+
     func testWritesInChunksAndFinishes() throws {
         let name = "VeloxTest_\(UUID().uuidString).csv"
         let url = documentsURL(name)
