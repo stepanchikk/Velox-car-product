@@ -378,6 +378,25 @@ final class OrientationCalibratorTests: XCTestCase {
         }
     }
 
+    // Якщо GPS не надсилає оновлень, фаза 2 завершується за таймаутом (25 с),
+    // а не зависає назавжди
+    func testForwardPhaseTimesOutWithoutGPS() {
+        let cal = OrientationCalibrator()
+        cal.reset(locationAvailable: true)
+        _ = feedStill(cal, gravity: flat, count: 20)          // фаза 1 завершилась на 1.9 с
+        var outcome: CalibrationOutcome = .calibratingForward(0)
+        for i in 0..<300 {                                       // 30 с без жодного оновлення GPS
+            outcome = cal.feedMotion(gravity: flat, userAcceleration: .zero, rotationRate: .zero,
+                                     time: 2.0 + Double(i) * 0.1)
+            if case .calibratingForward = outcome { continue }
+            break
+        }
+        guard case .failed(let message) = outcome else {
+            return XCTFail("без GPS очікувалась помилка за таймаутом, отримано \(outcome)")
+        }
+        XCTAssertTrue(message.contains("GPS"))
+    }
+
     func testFullCalibrationWithGPS() {
         let cal = OrientationCalibrator()
         cal.reset(locationAvailable: true)

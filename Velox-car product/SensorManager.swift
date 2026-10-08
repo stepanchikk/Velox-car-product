@@ -22,6 +22,23 @@ enum SessionState: Equatable {
     }
 }
 
+// Доступ до геолокації з погляду калібрування напряму руху
+enum LocationAccess: Equatable {
+    case notDetermined      // ще не запитували
+    case authorized         // дозволено, точне місцезнаходження
+    case reducedAccuracy    // дозволено, але лише приблизне: швидкості немає
+    case denied             // заборонено або обмежено
+
+    var hint: String {
+        switch self {
+        case .notDetermined: return "Геолокація: буде запитана при старті"
+        case .authorized: return "Геолокація: дозволено"
+        case .reducedAccuracy: return "Геолокація: лише приблизна, калібрування спрощене"
+        case .denied: return "Геолокація: заборонено, калібрування спрощене"
+        }
+    }
+}
+
 /// Керуючий клас сесії запису. Отримує дані від сенсорів і системи, передає їх
 /// спеціалізованим компонентам і публікує стан для інтерфейсу:
 /// - OrientationCalibrator - калібрування орієнтації (OrientationCalibrator.swift);
@@ -66,6 +83,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var showAlert = false
     @Published var alertMessage = ""
 
+    // Геолокація: стан доступу і діалоги перед стартом
+    @Published var locationStatus: LocationAccess = .notDetermined
+    @Published var showLocationPrompt = false        // пояснення перед системним запитом
+    @Published var showLocationDeniedPrompt = false  // доступу немає: Налаштування або без GPS
+
     // Компоненти
     private let calibrator = OrientationCalibrator()
     private var calibration: CalibrationResult?
@@ -76,7 +98,14 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let csvWriter = TripCSVWriter()
 
     private var forwardPhaseLogged = false
-    private var locationAuthorized = false
+    // Після системного діалогу дозволу запис стартує автоматично
+    private var startAfterAuthorization = false
+    // Користувач уже погодився записувати без GPS у цьому запуску застосунку
+    private var userAcceptedFallback = false
+
+    private var locationAuthorized: Bool {
+        locationStatus == .authorized
+    }
 
     // Останні значення, які потрапляють у рядки CSV
     private var lastRawLongitudinal: Double = 0.0
@@ -103,12 +132,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         locationManager.activityType = .automotiveNavigation
-        locationAuthorized = isLocationAuthorized(locationManager.authorizationStatus)
-        // Запитуємо дозвіл заздалегідь, щоб на момент старту запису статус
-        // уже був відомий і калібрування не чекало на системний діалог
-        if locationManager.authorizationStatus == .notDetermined {
-            locationManager.requestWhenInUseAuthorization()
-        }
+        // Дозвіл не запитуємо одразу: лише при першому «Старт», з поясненням навіщо
+        locationStatus = currentLocationAccess()
     }
 
     // Прибираємо спостерігачів і зупиняємо сенсори, коли об'єкт звільняється з пам'яті
@@ -127,12 +152,25 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     // MARK: - CLLocationManagerDelegate
 
-    private func isLocationAuthorized(_ status: CLAuthorizationStatus) -> Bool {
-        status == .authorizedWhenInUse || status == .authorizedAlways
+    private func currentLocationAccess() -> LocationAccess {
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            return .notDetermined
+        case .authorizedWhenInUse, .authorizedAlways:
+            // Приблизне місцезнаходження не дає швидкості, потрібної калібруванню
+            return locationManager.accuracyAuthorization == .fullAccuracy ? .authorized : .reducedAccuracy
+        default:
+            return .denied
+        }
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        locationAuthorized = isLocationAuthorized(manager.authorizationStatus)
+        locationStatus = currentLocationAccess()
+        // Користувач відповів на системний запит: стартуємо (з GPS або без)
+        if startAfterAuthorization, locationStatus != .notDetermined {
+            startAfterAuthorization = false
+            startRecording()
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -206,6 +244,53 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     // MARK: - Керування записом
+
+    // Кнопка «Старт»: спершу з'ясовуємо доступ до геолокації
+    func requestStart() {
+        guard !isRecording else { return }
+        // Без сенсорів руху питати про геолокацію немає сенсу: startRecording покаже помилку
+        guard motionManager.isDeviceMotionAvailable else {
+            startRecording()
+            return
+        }
+        locationStatus = currentLocationAccess()
+        switch locationStatus {
+        case .authorized:
+            startRecording()
+        case .notDetermined:
+            showLocationPrompt = true
+        case .denied, .reducedAccuracy:
+            if userAcceptedFallback {
+                startRecording()
+            } else {
+                showLocationDeniedPrompt = true
+            }
+        }
+    }
+
+    // «Дозволити» в поясненні: системний запит, після відповіді запис стартує сам
+    func allowLocationAndStart() {
+        startAfterAuthorization = true
+        locationManager.requestWhenInUseAuthorization()
+    }
+
+    // «Без геолокації»: спрощене калібрування (телефон екраном вгору, верхом вперед)
+    func startWithoutLocation() {
+        userAcceptedFallback = true
+        startRecording()
+    }
+
+    func openSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    var locationDeniedMessage: String {
+        if locationStatus == .reducedAccuracy {
+            return "Увімкнено лише приблизне місцезнаходження, а калібруванню потрібна точна швидкість. Увімкніть: Налаштування → Velox → Геолокація → «Точне місцезнаходження». Без цього телефон треба класти екраном вгору, верхньою частиною вперед."
+        }
+        return "Доступ до геолокації заборонено. Без неї калібрування спрощене: телефон треба класти екраном вгору, верхньою частиною вперед. Дозволити доступ можна в Налаштуваннях."
+    }
 
     func startRecording() {
         guard !isRecording else { return }

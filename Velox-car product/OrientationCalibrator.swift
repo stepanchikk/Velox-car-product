@@ -210,6 +210,9 @@ nonisolated final class OrientationCalibrator {
     private var upVector: Vector3?
     private var forwardCalibrator: ForwardCalibrator?
     private var forwardStartTime: TimeInterval?
+    // Скільки оновлень GPS надійшло у фазі 2 (щоб відрізнити "немає сигналу"
+    // від "замало розгонів")
+    private var locationUpdates = 0
     private var locationAvailable = true
 
     func reset(locationAvailable: Bool) {
@@ -221,6 +224,7 @@ nonisolated final class OrientationCalibrator {
         upVector = nil
         forwardCalibrator = nil
         forwardStartTime = nil
+        locationUpdates = 0
         self.locationAvailable = locationAvailable
     }
 
@@ -235,6 +239,11 @@ nonisolated final class OrientationCalibrator {
             return feedUp(gravity: gravity, userAcceleration: userAcceleration, rotationRate: rotationRate, time: time)
         case .forward:
             forwardCalibrator?.addMotionSample(userAcceleration: userAcceleration)
+            // Таймаут перевіряється і тут: якщо GPS перестав надсилати оновлення
+            // (тунель, заборона доступу), калібрування не повинно зависнути
+            if let timedOut = forwardTimeoutOutcome(time: time) {
+                return timedOut
+            }
             return .calibratingForward(forwardCalibrator?.progress ?? 0)
         }
     }
@@ -243,20 +252,33 @@ nonisolated final class OrientationCalibrator {
 
     func feedLocation(speed: Double, speedAccuracy: Double, time: TimeInterval) -> CalibrationOutcome? {
         guard phase == .forward, let calibrator = forwardCalibrator, let up = upVector else { return nil }
+        locationUpdates += 1
 
         if let forward = calibrator.addLocationSample(speed: speed, speedAccuracy: speedAccuracy, time: time) {
             return .finished(CalibrationResult(up: up, forward: forward, forwardSource: .gps,
                                                forwardQuality: 1.0))
         }
-        if let start = forwardStartTime, time - start > ForwardCalibrator.timeout {
-            if calibrator.isAcceptable, let forward = calibrator.currentEstimate() {
-                let quality = min(1.0, calibrator.energy / ForwardCalibrator.goodEnergyThreshold)
-                return .finished(CalibrationResult(up: up, forward: forward, forwardSource: .gps,
-                                                   forwardQuality: quality))
-            }
-            return .failed("Не вдалося визначити напрям руху: замало розгонів чи гальмувань за \(Int(ForwardCalibrator.timeout)) с. Проїдьте прямо, плавно прискорюючись і гальмуючи, або перекалібруйте пізніше.")
+        if let timedOut = forwardTimeoutOutcome(time: time) {
+            return timedOut
         }
         return .calibratingForward(calibrator.progress)
+    }
+
+    // Результат фази 2 після таймауту або nil, якщо час ще не вийшов
+    private func forwardTimeoutOutcome(time: TimeInterval) -> CalibrationOutcome? {
+        guard let start = forwardStartTime, let calibrator = forwardCalibrator, let up = upVector,
+              time - start > ForwardCalibrator.timeout else { return nil }
+
+        if calibrator.isAcceptable, let forward = calibrator.currentEstimate() {
+            let quality = min(1.0, calibrator.energy / ForwardCalibrator.goodEnergyThreshold)
+            return .finished(CalibrationResult(up: up, forward: forward, forwardSource: .gps,
+                                               forwardQuality: quality))
+        }
+        let seconds = Int(ForwardCalibrator.timeout)
+        if locationUpdates == 0 {
+            return .failed("Немає сигналу GPS за \(seconds) с. Перевірте доступ до геолокації або виїдіть на відкриту місцевість.")
+        }
+        return .failed("Не вдалося визначити напрям руху: замало розгонів чи гальмувань за \(seconds) с. Проїдьте прямо, плавно прискорюючись і гальмуючи, або перекалібруйте пізніше.")
     }
 
     // MARK: Фаза 1 - вертикаль (працює для будь-якого положення)

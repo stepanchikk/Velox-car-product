@@ -43,11 +43,16 @@ struct TrackerView: View {
                     .font(.footnote)
                     .foregroundColor(.secondary)
             } else {
-                Text("Після натискання «Старт» тримайте телефон нерухомо приблизно 2 секунди - калібрування визначить вертикаль автоматично, у будь-якому положенні телефона. Якщо доступна геолокація, після цього проїдьте прямо кілька секунд, щоб визначити напрям руху.")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+                VStack(spacing: 6) {
+                    Text("Після натискання «Старт» тримайте телефон нерухомо приблизно 2 секунди - калібрування визначить вертикаль автоматично, у будь-якому положенні телефона. Якщо доступна геолокація, після цього проїдьте прямо кілька секунд, щоб визначити напрям руху.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    Label(sensorManager.locationStatus.hint, systemImage: locationIcon(for: sensorManager.locationStatus))
+                        .font(.caption)
+                        .foregroundColor(sensorManager.locationStatus == .authorized ? .green : .secondary)
+                }
+                .padding(.horizontal)
             }
             
             // Підсумкова оцінка безпеки поїздки
@@ -107,7 +112,8 @@ struct TrackerView: View {
                     if sensorManager.isRecording {
                         sensorManager.stopRecording()
                     } else {
-                        sensorManager.startRecording()
+                        // Спершу перевіряється доступ до геолокації (з поясненням)
+                        sensorManager.requestStart()
                     }
                 }) {
                     Text(sensorManager.isRecording ? "Зупинити" : "Старт")
@@ -117,6 +123,14 @@ struct TrackerView: View {
                         .padding()
                         .background(sensorManager.isRecording ? Color.red : Color.green)
                         .cornerRadius(12)
+                }
+                // Пояснення перед системним запитом дозволу
+                .alert("Доступ до геолокації", isPresented: $sensorManager.showLocationPrompt) {
+                    Button("Дозволити") { sensorManager.allowLocationAndStart() }
+                    Button("Без геолокації") { sensorManager.startWithoutLocation() }
+                    Button("Скасувати", role: .cancel) { }
+                } message: {
+                    Text("Velox використовує геолокацію лише для визначення швидкості під час калібрування: так застосунок дізнається, куди рухається автомобіль, і телефон можна розмістити в будь-якому положенні. Координати не зберігаються.")
                 }
                 
                 Button(action: {
@@ -133,6 +147,14 @@ struct TrackerView: View {
             }
             .padding(.horizontal)
             .padding(.bottom, 30)
+            // Доступу немає: відкрити Налаштування або записувати без GPS
+            .alert("Геолокація недоступна", isPresented: $sensorManager.showLocationDeniedPrompt) {
+                Button("Відкрити Налаштування") { sensorManager.openSettings() }
+                Button("Продовжити без GPS") { sensorManager.startWithoutLocation() }
+                Button("Скасувати", role: .cancel) { }
+            } message: {
+                Text(sensorManager.locationDeniedMessage)
+            }
         }
         // Повідомлення користувачу: помилки сенсора, результат збереження
         .alert("Velox", isPresented: $sensorManager.showAlert) {
@@ -142,6 +164,15 @@ struct TrackerView: View {
         }
     }
     
+    private func locationIcon(for status: LocationAccess) -> String {
+        switch status {
+        case .authorized: return "location.fill"
+        case .notDetermined: return "location"
+        case .reducedAccuracy: return "location.circle"
+        case .denied: return "location.slash"
+        }
+    }
+
     private var canRecalibrateNow: Bool {
         sensorManager.isRecording && !sensorManager.isCalibrating && sensorManager.canManuallyRecalibrate
     }
