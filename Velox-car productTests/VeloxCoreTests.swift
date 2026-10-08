@@ -223,10 +223,12 @@ final class SafetyScoreTests: XCTestCase {
 
 final class TripCSVWriterTests: XCTestCase {
 
-    private func row(time: Double, state: String = "Запис іде", event: String = "") -> TelemetryRow {
+    private func row(time: Double, state: String = "Запис іде", event: String = "",
+                     coordinate: RoutePoint? = nil) -> TelemetryRow {
         TelemetryRow(time: time, filtered: 0.1, state: state, event: event, raw: 0.2,
                      userAcceleration: Vector3(x: 0.01, y: 0.02, z: 0.03),
-                     tiltDegrees: 1.5, score: 98, speed: 12.5)
+                     rotationRate: Vector3(x: 0.1, y: 0.2, z: 0.3),
+                     tiltDegrees: 1.5, score: 98, speed: 12.5, coordinate: coordinate)
     }
 
     private func documentsURL(_ name: String) -> URL {
@@ -236,17 +238,27 @@ final class TripCSVWriterTests: XCTestCase {
     func testRowHasSameColumnCountAsHeaderAndNoExtraCommas() {
         let header = TripCSVWriter.header.split(separator: ",", omittingEmptySubsequences: false)
         let line = row(time: 1, state: "Запис, іде").csvLine.split(separator: ",", omittingEmptySubsequences: false)
-        XCTAssertEqual(header.count, 11)
+        XCTAssertEqual(header.count, 16)
         XCTAssertEqual(line.count, header.count)
         XCTAssertEqual(String(line[2]), "Запис іде")   // кома зі стану прибрана
+        // Гіроскоп - після прискорень, у колонках Gx, Gy, Gz
+        XCTAssertEqual(header[8...10].map(String.init), ["Gx", "Gy", "Gz"])
+        XCTAssertEqual(line[8...10].map(String.init), ["0.1", "0.2", "0.3"])
     }
 
-    func testMissingSpeedLeavesEmptyLastColumn() {
+    func testMissingSpeedAndRouteLeaveEmptyColumns() {
         let r = TelemetryRow(time: 1, filtered: 0, state: "Запис іде", event: "", raw: 0,
-                             userAcceleration: .zero, tiltDegrees: 0, score: 100, speed: nil)
+                             userAcceleration: .zero, rotationRate: .zero, tiltDegrees: 0,
+                             score: 100, speed: nil, coordinate: nil)
         let fields = r.csvLine.split(separator: ",", omittingEmptySubsequences: false)
-        XCTAssertEqual(fields.count, 11)
-        XCTAssertEqual(String(fields[10]), "")
+        XCTAssertEqual(fields.count, 16)
+        XCTAssertEqual(fields[13...15].map(String.init), ["", "", ""])   // Speed_mps, Lat, Lon
+    }
+
+    func testCoordinatesGoToLatLon() {
+        let line = row(time: 1, coordinate: RoutePoint(latitude: 48.29, longitude: 25.94)).csvLine
+        let fields = line.split(separator: ",", omittingEmptySubsequences: false)
+        XCTAssertEqual(fields[14...15].map(String.init), ["48.29", "25.94"])
     }
 
     func testWritesInChunksAndFinishes() throws {
@@ -379,6 +391,44 @@ final class TripMetadataTests: XCTestCase {
         XCTAssertEqual(stats.distractions, 1)                // продовження - не нове відволікання
         XCTAssertEqual(try XCTUnwrap(stats.distractionSeconds), 19.4, accuracy: 1e-9)
         XCTAssertEqual(stats.score, 94)
+    }
+
+    // Маршрут: однакові точки підряд прибираються, події стають на останню відому точку
+    func testRouteParsing() throws {
+        let csv = """
+        # format=3
+        # route=on
+        Timestamp,Filtered_Y,Event,Speed_mps,Lat,Lon
+        0.1,0,,,,
+        0.2,0,,10,48.1,25.1
+        0.3,0,,10,48.1,25.1
+        0.4,-0.5,HardBraking,10,,
+        1.2,0,,9,48.2,25.2
+        1.3,0,Distraction,9,48.2,25.2
+        2.2,0,,9,48.3,25.3
+        """
+        let stats = try XCTUnwrap(TripCSVParser.parse(csv))
+        XCTAssertTrue(stats.hasRoute)
+        let route = try XCTUnwrap(TripRoute.parse(csv))
+        XCTAssertEqual(route.points, [RoutePoint(latitude: 48.1, longitude: 25.1),
+                                      RoutePoint(latitude: 48.2, longitude: 25.2),
+                                      RoutePoint(latitude: 48.3, longitude: 25.3)])
+        XCTAssertEqual(route.events.map(\.kind), [.hardBraking, .distraction])
+        XCTAssertEqual(route.events[0].point, RoutePoint(latitude: 48.1, longitude: 25.1))
+    }
+
+    func testNoRouteWithoutCoordinates() throws {
+        let csv = "Timestamp,Filtered_Y,Event,Lat,Lon\n0.1,0,,,\n0.2,0,,,\n"
+        XCTAssertFalse(try XCTUnwrap(TripCSVParser.parse(csv)).hasRoute)
+        XCTAssertNil(TripRoute.parse(csv))
+    }
+
+    func testRouteThinningKeepsEnds() {
+        let points = (0..<5_000).map { RoutePoint(latitude: Double($0), longitude: 0) }
+        let thinned = TripRoute.thin(points)
+        XCTAssertEqual(thinned.count, TripRoute.maxPoints)
+        XCTAssertEqual(thinned.first, points.first)
+        XCTAssertEqual(thinned.last, points.last)
     }
 }
 
@@ -901,6 +951,31 @@ final class GamificationTests: XCTestCase {
             .first { $0.id == "smooth" }
         XCTAssertEqual(smooth?.progress ?? -1, 0.4, accuracy: 1e-9)
         XCTAssertEqual(smooth?.progressText, "2 з 5")
+    }
+
+    // Оцінка водія: штрафи на 10 км, а не на поїздку
+    func testDriverRatingNormalizesByDistance() {
+        // 10 км з оцінкою 90 і 30 км з оцінкою 94: штрафи 16 на 40 км = 4 на 10 км
+        let stats = DrivingStats(trips: [trip(day: 1, score: 90, distance: 10_000),
+                                         trip(day: 2, score: 94, distance: 30_000)])
+        XCTAssertEqual(stats.driverRating, 96)
+        XCTAssertEqual(stats.averageRecentScore, 92)
+    }
+
+    func testLongTripIsNotPunishedForLength() {
+        // Коротка поїздка з одним відволіканням (95) і довга з трьома (85):
+        // за середнім оцінки довга гірша, а на кілометр - безпечніша
+        let short = DrivingStats(trips: [trip(day: 1, score: 95, distance: 5_000)])
+        let long = DrivingStats(trips: [trip(day: 1, score: 85, distance: 50_000)])
+        XCTAssertEqual(short.driverRating, 95)      // пробіг менше 10 км рахується як 10 км
+        XCTAssertEqual(long.driverRating, 97)       // 15 штрафу на 50 км = 3 на 10 км
+    }
+
+    func testDriverRatingWithoutGPSUsesDuration() {
+        // Без GPS 30 хвилин дорівнюють 15 км (30 км/год): 15 штрафу на 15 км
+        let stats = DrivingStats(trips: [trip(day: 1, score: 85, duration: 1_800, distance: nil)])
+        XCTAssertEqual(stats.driverRating, 90)
+        XCTAssertNil(DrivingStats(trips: []).driverRating)
     }
 
     func testTipIsStableDuringDay() {

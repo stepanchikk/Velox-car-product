@@ -48,6 +48,20 @@ nonisolated enum VeloxConfig {
     static let safeScoreMin: Int = 90
     static let mediumScoreMin: Int = 75
 
+    // MARK: Оцінка водія (за останні поїздки)
+
+    // Оцінка окремої поїздки - це 100 мінус штрафи, тому довга поїздка майже
+    // завжди нижча за коротку. Оцінка водія порівнює чесніше: штрафи останніх
+    // поїздок перераховуються на ratingDistanceKm кілометрів їзди.
+    static let ratingDistanceKm: Double = 10.0
+    // Поїздки без GPS: відстань оцінюється за тривалістю з цією швидкістю, км/год
+    static let ratingFallbackSpeedKmh: Double = 30.0
+
+    // MARK: Маршрут
+
+    // Координати з точністю гірше за цю (м) у файл не пишуться
+    static let routeMaxHorizontalAccuracy: Double = 50.0
+
     // MARK: Перекалібрування
 
     // Автоматичне: нахил телефона змінився більше ніж на кут і тримається довше за час

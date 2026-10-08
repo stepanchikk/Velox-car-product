@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.themeKey) private var theme = AppTheme.dark.rawValue
     @AppStorage(AppSettings.hapticsKey) private var haptics = true
     @AppStorage(AppSettings.showLiveAccelerationKey) private var showLiveAcceleration = true
+    @AppStorage(AppSettings.saveRouteKey) private var saveRoute = false
 
     @State private var confirmDeleteTrips = false
     @State private var confirmDeleteProfile = false
@@ -39,13 +40,17 @@ struct SettingsView: View {
 
             Section {
                 Label(sensorManager.locationStatus.hint, systemImage: "location")
+                Toggle("Зберігати маршрут", isOn: $saveRoute)
+                    .disabled(sensorManager.isRecording)
                 Button("Відкрити налаштування iOS") {
                     sensorManager.openSettings()
                 }
             } header: {
                 SectionTitle("Геолокація")
             } footer: {
-                Text("Швидкість за GPS потрібна лише для калібрування напряму руху. Координати не зберігаються.")
+                Text(saveRoute
+                     ? "Координати пишуться у файл поїздки, і в підсумку видно маршрут з місцями подій. Файл лишається на телефоні, але потрапляє до CSV, яким ви ділитеся. Змінити можна між поїздками."
+                     : "Швидкість за GPS потрібна для калібрування напряму руху. Координати не зберігаються. Увімкніть «Зберігати маршрут», щоб бачити поїздку на карті.")
             }
 
             Section {
@@ -65,12 +70,13 @@ struct SettingsView: View {
                 LabeledContent("Штраф за відволікання", value: "-\(VeloxConfig.distractionPenalty)")
                 LabeledContent("За тривалість відволікання",
                                value: "-\(VeloxConfig.distractionDurationPenalty) за кожні \(Int(VeloxConfig.distractionDurationStep)) с, до -\(VeloxConfig.distractionDurationPenaltyMax)")
+                LabeledContent("Оцінка водія", value: "штрафи на \(Int(VeloxConfig.ratingDistanceKm)) км")
                 LabeledContent("Безпечний водій", value: "від \(VeloxConfig.safeScoreMin)")
                 LabeledContent("Середній рівень", value: "від \(VeloxConfig.mediumScoreMin)")
             } header: {
                 SectionTitle("Як рахується Safety Score")
             } footer: {
-                Text("Кожна поїздка починається зі 100 балів. Різкі маневри і користування телефоном під час руху знижують оцінку. Вхідний дзвінок і розмова через гучний звʼязок, гарнітуру чи CarPlay не штрафуються, а розмова з телефоном біля вуха вважається відволіканням.")
+                Text("Кожна поїздка починається зі 100 балів. Різкі маневри і користування телефоном під час руху знижують оцінку. Оцінка водія на головній рахує штрафи останніх поїздок на кожні \(Int(VeloxConfig.ratingDistanceKm)) км, щоб довга поїздка не програвала короткій. Вхідний дзвінок і розмова через гучний звʼязок, гарнітуру чи CarPlay не штрафуються, а розмова з телефоном біля вуха вважається відволіканням.")
             }
 
             Section {

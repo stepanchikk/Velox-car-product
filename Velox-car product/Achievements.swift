@@ -18,17 +18,43 @@ nonisolated struct DrivingStats: Equatable, Sendable {
     let recentScoreCount: Int
     // Оцінки останніх поїздок від старої до нової (для графіка)
     let recentScores: [Int]
+    // Оцінка водія: штрафи тих самих поїздок, перераховані на
+    // VeloxConfig.ratingDistanceKm кілометрів (див. rating)
+    let driverRating: Int?
 
     init(trips: [TripSummary]) {
         let newestFirst = trips.sorted { $0.date > $1.date }
         tripCount = trips.count
         totalDistanceMeters = trips.compactMap { $0.stats.distanceMeters }.reduce(0, +)
         totalDuration = trips.map { $0.stats.duration }.reduce(0, +)
-        let scores = newestFirst.compactMap { $0.stats.score }.prefix(Self.recentWindow)
+        let recent = Array(newestFirst.filter { $0.stats.score != nil }.prefix(Self.recentWindow))
+        let scores = recent.compactMap { $0.stats.score }
         recentScoreCount = scores.count
         averageRecentScore = scores.isEmpty ? nil
             : Int((Double(scores.reduce(0, +)) / Double(scores.count)).rounded())
         recentScores = Array(scores.reversed())
+        driverRating = Self.rating(recent)
+    }
+
+    /// Пробіг поїздки для нормування, км: за GPS, а без нього - за тривалістю
+    static func exposureKm(_ trip: TripSummary) -> Double {
+        if let meters = trip.stats.distanceMeters, meters > 0 {
+            return meters / 1000
+        }
+        return trip.stats.duration / 3600 * VeloxConfig.ratingFallbackSpeedKmh
+    }
+
+    /// Оцінка водія = 100 - (сума штрафів / пробіг) * 10 км.
+    /// Штраф поїздки - це 100 мінус її Safety Score. Пробіг береться не менше
+    /// 10 км, тож поодинокий короткий заїзд оцінюється як звичайна поїздка
+    /// і одна помилка на 2 км не обвалює оцінку до нуля.
+    static func rating(_ trips: [TripSummary]) -> Int? {
+        let scored = trips.filter { $0.stats.score != nil }
+        guard !scored.isEmpty else { return nil }
+        let penalties = scored.map { Double(100 - ($0.stats.score ?? 100)) }.reduce(0, +)
+        let exposure = max(scored.map(exposureKm).reduce(0, +), VeloxConfig.ratingDistanceKm)
+        let value = 100 - penalties / exposure * VeloxConfig.ratingDistanceKm
+        return Int(max(0, value).rounded())
     }
 }
 

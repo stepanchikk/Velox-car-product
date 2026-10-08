@@ -34,6 +34,9 @@ nonisolated struct TripStats: Hashable, Sendable {
     var skippedLines = 0
     // Параметри запису з рядків "# ключ=значення"; nil для файлів старих версій
     var metadata: TripMetadata?
+    // У файлі є координати (увімкнено «Зберігати маршрут»); сам маршрут
+    // читається окремо, лише коли відкривають поїздку (TripRoute)
+    var hasRoute = false
 
     var maneuvers: Int? {
         guard let b = hardBrakings, let a = hardAccelerations else { return nil }
@@ -66,6 +69,7 @@ nonisolated enum TripCSVParser {
         let iEvent = header.firstIndex(of: "Event")
         let iScore = header.firstIndex(of: "Score")
         let iSpeed = header.firstIndex(of: "Speed_mps")
+        let iLat = header.firstIndex(of: "Lat")
 
         var stats = TripStats()
         stats.metadata = metadata.isEmpty ? nil : metadata
@@ -85,6 +89,9 @@ nonisolated enum TripCSVParser {
                 continue
             }
             stats.duration = max(stats.duration, time)
+            if !stats.hasRoute, let i = iLat, !fields[i].isEmpty {
+                stats.hasRoute = true
+            }
             if let i = iScore, let value = Int(fields[i]) {
                 lastScore = value
             }
@@ -145,6 +152,79 @@ nonisolated enum TripCSVParser {
         }
         stats.distanceMeters = hasSpeed ? distance : nil
         return stats
+    }
+}
+
+// MARK: - Маршрут
+
+/// Маршрут поїздки і місця подій на ньому (колонки Lat, Lon)
+nonisolated struct TripRoute: Equatable, Sendable {
+    nonisolated enum EventKind: Hashable, Sendable {
+        case hardBraking, hardAcceleration, distraction
+    }
+
+    nonisolated struct Event: Identifiable, Hashable, Sendable {
+        let id: Int
+        let kind: EventKind
+        let point: RoutePoint
+        let time: TimeInterval
+    }
+
+    // Більше точок карта малює повільно, а на екрані різниці не видно
+    static let maxPoints = 1500
+
+    let points: [RoutePoint]
+    let events: [Event]
+
+    /// Маршрут з тексту CSV або nil, якщо координат менше двох
+    static func parse(_ text: String) -> TripRoute? {
+        let lines = text.split(whereSeparator: \.isNewline)
+        guard let headerIndex = lines.firstIndex(where: { !$0.hasPrefix(TripMetadata.linePrefix) }) else { return nil }
+        let header = lines[headerIndex].split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        guard let iLat = header.firstIndex(of: "Lat"), let iLon = header.firstIndex(of: "Lon"),
+              let iTime = header.firstIndex(of: "Timestamp") else { return nil }
+        let iEvent = header.firstIndex(of: "Event")
+
+        var points: [RoutePoint] = []
+        var events: [Event] = []
+        var last: RoutePoint?
+        for line in lines[(headerIndex + 1)...] {
+            let fields = line.split(separator: ",", omittingEmptySubsequences: false)
+            guard fields.count == header.count, let time = Double(fields[iTime]) else { continue }
+            if let lat = Double(fields[iLat]), let lon = Double(fields[iLon]) {
+                let point = RoutePoint(latitude: lat, longitude: lon)
+                // Координати оновлюються раз на секунду, а рядки пишуться 10 разів:
+                // однакові точки підряд не потрібні
+                if point != last {
+                    points.append(point)
+                    last = point
+                }
+            }
+            let kind: EventKind?
+            switch iEvent.map({ String(fields[$0]) }) ?? "" {
+            case "HardBraking": kind = .hardBraking
+            case "HardAcceleration": kind = .hardAcceleration
+            case "Distraction": kind = .distraction
+            default: kind = nil
+            }
+            if let kind = kind, let point = last {
+                events.append(Event(id: events.count, kind: kind, point: point, time: time))
+            }
+        }
+        guard points.count >= 2 else { return nil }
+        return TripRoute(points: thin(points), events: events)
+    }
+
+    static func load(from url: URL) -> TripRoute? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return parse(text)
+    }
+
+    /// Рівномірне проріджування до maxPoints (перша і остання точки лишаються)
+    static func thin(_ points: [RoutePoint]) -> [RoutePoint] {
+        guard points.count > maxPoints else { return points }
+        let step = Double(points.count - 1) / Double(maxPoints - 1)
+        return (0..<maxPoints).map { points[Int((Double($0) * step).rounded())] }
     }
 }
 

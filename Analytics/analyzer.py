@@ -60,6 +60,8 @@ CONFIG_KEYS = {
     "distractionDurationPenaltyMax": ("DURATION_PENALTY_MAX", int, 5),
     "safeScoreMin": ("SAFE_SCORE_MIN", int, 90),
     "mediumScoreMin": ("MEDIUM_SCORE_MIN", int, 75),
+    "ratingDistanceKm": ("RATING_DISTANCE_KM", float, 10.0),
+    "ratingFallbackSpeedKmh": ("RATING_FALLBACK_SPEED_KMH", float, 30.0),
 }
 # Значення за замовчуванням; main() замінює їх значеннями з VeloxConfig.swift
 ALPHA = 0.2
@@ -72,6 +74,15 @@ DURATION_PENALTY = 1          # ... мінус DURATION_PENALTY балів
 DURATION_PENALTY_MAX = 5      # ... але не більше за одне відволікання
 SAFE_SCORE_MIN = 90
 MEDIUM_SCORE_MIN = 75
+RATING_DISTANCE_KM = 10.0         # оцінка водія: штрафи на стільки км
+RATING_FALLBACK_SPEED_KMH = 30.0  # поїздки без GPS: відстань за тривалістю
+
+# Напрям руху за поворотами: ті самі пороги, що в YawForwardEstimator
+# (OrientationCalibrator.swift)
+YAW_MIN_RATE = 0.05        # рад/с
+YAW_MAX_ACCELERATION = 1.0 # G
+YAW_REQUIRED_ENERGY = 3.0
+YAW_MIN_CONSISTENCY = 0.5
 
 G_MS2 = 9.80665             # 1 G у м/с^2
 
@@ -237,6 +248,41 @@ def load_trip(path):
     t = motion["Timestamp"].to_numpy(dtype=float)
     y = motion["Filtered_Y"].to_numpy(dtype=float)
 
+    # Гіроскоп (формат 3+) і калібрування, до якого належить кожен вимір:
+    # номер = скільки подій CalibrationStart* було до нього
+    axes = ["Ax", "Ay", "Az", "Gx", "Gy", "Gz"]
+    has_gyro = set(axes).issubset(df.columns)
+    segment_all = df["Event"].str.startswith("CalibrationStart").cumsum()
+    imu = None
+    if has_gyro:
+        for c in axes:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        m = df[~is_extra].reset_index(drop=True)
+        imu = {
+            "acc": m[["Ax", "Ay", "Az"]].to_numpy(dtype=float),
+            "gyro": m[["Gx", "Gy", "Gz"]].to_numpy(dtype=float),
+            "raw": m["Raw_Y"].to_numpy(dtype=float) if has_raw else None,
+            "segment": segment_all[~is_extra].to_numpy(),
+        }
+    # Тип кожного калібрування: GPS чи без GPS
+    segment_kind = {}
+    for seg, ev in zip(segment_all, df["Event"]):
+        if ev == "CalibrationDone":
+            segment_kind[int(seg)] = "gps"
+        elif ev == "CalibrationDoneFallback":
+            segment_kind[int(seg)] = "fallback"
+
+    # Маршрут (формат 3+, якщо ввімкнено «Зберігати маршрут»)
+    route = None
+    if {"Lat", "Lon"}.issubset(df.columns):
+        df["Lat"] = pd.to_numeric(df["Lat"], errors="coerce")
+        df["Lon"] = pd.to_numeric(df["Lon"], errors="coerce")
+        r = df[["Timestamp", "Lat", "Lon", "Event"]].copy()
+        r[["Lat", "Lon"]] = r[["Lat", "Lon"]].ffill()   # подія - на останній відомій точці
+        r = r.dropna(subset=["Lat", "Lon"])
+        if len(r) >= 2:
+            route = r
+
     speed = motion["Speed_mps"].to_numpy(dtype=float) if has_speed else None
 
     params, changed = trip_params(metadata)
@@ -271,6 +317,9 @@ def load_trip(path):
         "metadata": metadata,
         "params": params,
         "params_changed": bool(changed),
+        "imu": imu,
+        "segment_kind": segment_kind,
+        "route": route,
     }
 
 
@@ -309,6 +358,56 @@ def gps_check(trip, bin_s=1.0):
     slope = float(np.polyfit(a_gps[good], a_app[good], 1)[0])
     return {"r": r, "slope": slope, "n": int(good.sum()),
             "t": bt[1:], "a_gps": a_gps, "a_app": a_app, "speed": bv[1:], "good": good}
+
+
+def yaw_forward(acc, gyro, up):
+    """Порт YawForwardEstimator: напрям руху за кореляцією кутової швидкості
+    повороту з горизонтальним прискоренням. Повертає (forward, energy, consistency)."""
+    up = up / np.linalg.norm(up)
+    yaw = gyro @ up
+    horiz = acc - np.outer(acc @ up, up)
+    hnorm = np.linalg.norm(horiz, axis=1)
+    use = (np.abs(yaw) >= YAW_MIN_RATE) & (hnorm <= YAW_MAX_ACCELERATION)
+    w = (horiz[use] * yaw[use][:, None]).sum(axis=0)
+    energy = float(np.sum(yaw[use] ** 2))
+    abs_sum = float(np.sum(np.abs(yaw[use]) * hnorm[use]))
+    consistency = float(np.linalg.norm(w) / abs_sum) if abs_sum > 0 else 0.0
+    f = -np.cross(up, w)
+    n = np.linalg.norm(f)
+    return (f / n if n > 0 else None), energy, consistency
+
+
+def yaw_check(trip):
+    """Перевірка методу "напрям за поворотами" на поїздці з GPS: у найдовшому
+    GPS-калібруванні справжній напрям руху відновлюється точно з Raw_Y = a * forward,
+    а вертикаль - як головна вісь обертання (авто крутиться переважно навколо
+    вертикалі; знак вертикалі на метод не впливає). Повертає None, якщо в
+    файлі немає гіроскопа або GPS-калібрування."""
+    imu = trip["imu"]
+    if imu is None or imu["raw"] is None:
+        return None
+    gps_segments = [s for s, k in trip["segment_kind"].items() if k == "gps"]
+    if not gps_segments:
+        return None
+    seg = max(gps_segments, key=lambda s: int(np.sum(imu["segment"] == s)))
+    sel = (imu["segment"] == seg) & np.all(np.isfinite(imu["acc"]), axis=1) & np.all(np.isfinite(imu["gyro"]), axis=1)
+    if sel.sum() < 300:
+        return None
+    acc, gyro, raw = imu["acc"][sel], imu["gyro"][sel], imu["raw"][sel]
+    forward, *_ = np.linalg.lstsq(acc, raw, rcond=None)
+    if np.linalg.norm(forward) < 1e-6:
+        return None
+    forward /= np.linalg.norm(forward)
+    smooth = pd.DataFrame(gyro).rolling(10, center=True).mean().dropna().to_numpy()
+    up = np.linalg.eigh(np.cov(smooth.T))[1][:, -1]
+    up = up - forward * np.dot(up, forward)
+    up /= np.linalg.norm(up)
+    estimate, energy, consistency = yaw_forward(acc, gyro, up)
+    decided = estimate is not None and energy >= YAW_REQUIRED_ENERGY and consistency >= YAW_MIN_CONSISTENCY
+    angle = None
+    if estimate is not None:
+        angle = float(np.degrees(np.arccos(np.clip(np.dot(estimate, forward), -1, 1))))
+    return {"angle": angle, "energy": energy, "consistency": consistency, "decided": decided}
 
 
 def find_calibration_windows(df):
@@ -576,6 +675,39 @@ def plot_gps_check(trip, check, out_dir):
     return fig
 
 
+def plot_route(trip, out_dir):
+    """Маршрут поїздки з місцями подій (лише якщо у файлі є координати)."""
+    r = trip["route"]
+    # Розмір рисунка за пропорціями маршруту, щоб не було порожніх полів
+    k = np.cos(np.radians(r["Lat"].mean()))
+    width = max(float(r["Lon"].max() - r["Lon"].min()) * k, 1e-6)
+    height = max(float(r["Lat"].max() - r["Lat"].min()), 1e-6)
+    fig_h = float(np.clip(10 * height / width, 4, 10))
+    fig, ax = plt.subplots(figsize=(10, fig_h + 1.2))
+    ax.plot(r["Lon"], r["Lat"], color="tab:blue", linewidth=2, label="Маршрут")
+    ax.scatter(r["Lon"].iloc[0], r["Lat"].iloc[0], color="green", s=80, zorder=5, label="Старт")
+    ax.scatter(r["Lon"].iloc[-1], r["Lat"].iloc[-1], color="black", s=80, zorder=5, label="Фініш")
+    for ev, (marker, color, label) in EVENT_STYLE.items():
+        sub = r[r["Event"] == ev]
+        if len(sub):
+            ax.scatter(sub["Lon"], sub["Lat"], marker=marker, color=color, s=110, zorder=6,
+                       edgecolor="black", label=label)
+    sub = r[r["Event"] == "Distraction"]
+    if len(sub):
+        ax.scatter(sub["Lon"], sub["Lat"], marker="X", color=DISTRACTION_COLOR, s=110, zorder=6,
+                   edgecolor="black", label="Відволікання")
+    # Градус довготи коротший за градус широти в cos(широти) разів
+    ax.set_aspect(1 / np.cos(np.radians(r["Lat"].mean())))
+    ax.set_title(f"Маршрут: {trip['name']}")
+    ax.set_xlabel("Довгота, градуси")
+    ax.set_ylabel("Широта, градуси")
+    ax.grid(True, alpha=0.4)
+    _unique_legend(ax, loc="best")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, f"{stem(trip)}_route.png"), dpi=150)
+    return fig
+
+
 def plot_score_evolution(trip, out_dir):
     """Динаміка Safety Score протягом поїздки (лише для файлів з колонкою Score)."""
     ts, scores = trip["score_series"]
@@ -682,6 +814,42 @@ def stem(trip):
     return os.path.splitext(trip["name"])[0]
 
 
+def trip_distance_km(trip, max_gap=3.0):
+    """Відстань за швидкістю GPS (трапеції), як у TripCSVParser; None без швидкості."""
+    if trip["speed"] is None:
+        return None
+    t, v = trip["t"], trip["speed"]
+    ok = ~np.isnan(v)
+    if ok.sum() < 2:
+        return None
+    t, v = t[ok], v[ok]
+    dt = np.diff(t)
+    good = (dt > 0) & (dt <= max_gap)
+    return float(np.sum(((v[1:] + v[:-1]) / 2 * dt)[good]) / 1000)
+
+
+def trips_word(n):
+    """1 поїздку, 2 поїздки, 5 поїздок (як HomeView.tripsWord)."""
+    if 11 <= n % 100 <= 14:
+        return "поїздок"
+    return {1: "поїздку", 2: "поїздки", 3: "поїздки", 4: "поїздки"}.get(n % 10, "поїздок")
+
+
+def driver_rating(trips, window=10):
+    """Оцінка водія як на головній (DrivingStats.rating): штрафи останніх поїздок
+    на RATING_DISTANCE_KM км; без GPS відстань - за тривалістю."""
+    scored = [tr for tr in trips if tr["final_score_logged"] is not None][-window:]
+    if not scored:
+        return None
+    penalties = sum(100 - tr["final_score_logged"] for tr in scored)
+    exposure = 0.0
+    for tr in scored:
+        km = tr.get("distance_km")
+        exposure += km if km else (tr["t"][-1] - tr["t"][0]) / 3600 * RATING_FALLBACK_SPEED_KMH
+    exposure = max(exposure, RATING_DISTANCE_KM)
+    return max(0, round(100 - penalties / exposure * RATING_DISTANCE_KM)), len(scored), exposure
+
+
 def summarize(trips):
     rows = []
     for trip in trips:
@@ -729,6 +897,9 @@ def summarize(trips):
             "Safety Score (лог)": score_logged_label,
             "Safety Score (розрахунок)": score_computed_label,
             "Кореляція з GPS (r)": round(trip["gps"]["r"], 2) if trip.get("gps") else na,
+            "Напрям за поворотами, похибка °": (round(trip["yaw"]["angle"], 1)
+                                               if trip.get("yaw") and trip["yaw"]["angle"] is not None else na),
+            "Відстань, км": round(trip["distance_km"], 2) if trip.get("distance_km") is not None else na,
             "Сирий сигнал": trip["raw_source"],
             "Поріг запису, G": p["maneuverThreshold"],
             "Параметри": ("з файлу, відрізняються від поточних" if trip["params_changed"]
@@ -827,6 +998,16 @@ def main():
             figs.append(plot_gps_check(trip, g, out_dir))
         if trip["score_series"] is not None:
             figs.append(plot_score_evolution(trip, out_dir))
+        trip["yaw"] = yaw_check(trip)
+        if trip["yaw"] is not None:
+            yc = trip["yaw"]
+            angle = f"{yc['angle']:.1f}°" if yc["angle"] is not None else "н/д"
+            state = "рішення прийнято" if yc["decided"] else "поворотів замало для рішення"
+            print(f"  -> Напрям за поворотами проти GPS: похибка {angle} "
+                  f"(енергія {yc['energy']:.1f}, узгодженість {yc['consistency']:.2f}, {state})")
+        trip["distance_km"] = trip_distance_km(trip)
+        if trip["route"] is not None:
+            figs.append(plot_route(trip, out_dir))
         if not args.show:
             for f in figs:
                 plt.close(f)
@@ -846,6 +1027,11 @@ def main():
     print(summary.to_string(index=False))
     print()
     check_consistency(summary)
+    rating = driver_rating(trips)
+    if rating is not None:
+        value, count, km = rating
+        print(f"Оцінка водія (як на головній): {value} за {count} {trips_word(count)}, "
+              f"штрафи на {RATING_DISTANCE_KM:g} км, пробіг для розрахунку {km:.1f} км")
     print(f"\nГрафіки та summary.csv збережено в: {out_dir}")
 
     if args.show:

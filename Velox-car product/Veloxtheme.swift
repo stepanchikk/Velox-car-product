@@ -62,10 +62,16 @@ nonisolated enum AppSettings {
     static let themeKey = "appTheme"
     static let hapticsKey = "hapticsEnabled"
     static let showLiveAccelerationKey = "showLiveAcceleration"
+    static let saveRouteKey = "saveRoute"
 
     // Значення за замовчуванням - увімкнено (ключа ще немає в UserDefaults)
     static var hapticsEnabled: Bool {
         UserDefaults.standard.object(forKey: hapticsKey) as? Bool ?? true
+    }
+
+    // Маршрут - це особисті дані, тому за замовчуванням вимкнено
+    static var saveRouteEnabled: Bool {
+        UserDefaults.standard.bool(forKey: saveRouteKey)
     }
 }
 

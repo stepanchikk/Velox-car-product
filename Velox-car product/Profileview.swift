@@ -28,12 +28,14 @@ struct ProfileView: View {
                     LabeledContent("Поїздок", value: "\(stats.tripCount)")
                     LabeledContent("Проїхано", value: TripFormat.distance(stats.totalDistanceMeters))
                     LabeledContent("За кермом", value: TripFormat.duration(stats.totalDuration))
-                    LabeledContent("Середній Safety Score",
+                    LabeledContent("Оцінка водія",
+                                   value: stats.driverRating.map { "\($0)" } ?? "немає даних")
+                    LabeledContent("Середня оцінка поїздок",
                                    value: stats.averageRecentScore.map { "\($0)" } ?? "немає даних")
                 } header: {
                     SectionTitle("Статистика")
                 } footer: {
-                    Text("Середня оцінка рахується за \(DrivingStats.recentWindow) останніми поїздками.")
+                    Text("Обидві оцінки рахуються за \(DrivingStats.recentWindow) останніми поїздками. Оцінка водія перераховує штрафи на \(Int(VeloxConfig.ratingDistanceKm)) км їзди, тому година за кермом і 10 хвилин порівнюються чесно.")
                 }
 
                 Section {

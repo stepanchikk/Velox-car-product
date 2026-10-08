@@ -1,4 +1,5 @@
 import SwiftUI
+import MapKit
 
 // Вкладка «Історія»: список збережених поїздок, підсумок поїздки,
 // експорт CSV через системне меню «Поділитися» і видалення.
@@ -220,6 +221,17 @@ struct TripDetailView: View {
                 SectionTitle("Події")
             }
 
+            if trip.stats.hasRoute {
+                Section {
+                    TripRouteMap(url: trip.url)
+                        .listRowInsets(EdgeInsets())
+                } header: {
+                    SectionTitle("Маршрут")
+                } footer: {
+                    Text("Червоні позначки - різкі гальмування, жовті - розгони, сині - відволікання.")
+                }
+            }
+
             if let metadata = trip.stats.metadata {
                 parametersSection(metadata)
             }
@@ -292,6 +304,79 @@ struct TripDetailView: View {
         case .fallback: return "без GPS (спрощене)"
         case .fallbackChecked: return "без GPS, напрям за поворотами"
         case .unknown: return "немає даних"
+        }
+    }
+}
+
+// MARK: - Карта маршруту
+
+/// Маршрут поїздки з позначками подій. Файл читається у фоні лише тоді,
+/// коли відкривають підсумок, тому список поїздок не тримає в памʼяті координати.
+struct TripRouteMap: View {
+    let url: URL
+    @State private var route: TripRoute?
+    @State private var isLoaded = false
+
+    var body: some View {
+        Group {
+            if let route = route {
+                Map(initialPosition: .automatic) {
+                    MapPolyline(coordinates: route.points.map { $0.coordinate })
+                        .stroke(VeloxColor.accent, lineWidth: 4)
+                    ForEach(route.events) { event in
+                        Marker(event.kind.title, systemImage: event.kind.systemImage,
+                               coordinate: event.point.coordinate)
+                            .tint(event.kind.color)
+                    }
+                }
+                .mapStyle(.standard(pointsOfInterest: .excludingAll))
+            } else if isLoaded {
+                Text("Не вдалося прочитати маршрут")
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 280)
+        .task(id: url) {
+            let url = self.url
+            route = await Task.detached(priority: .userInitiated) {
+                TripRoute.load(from: url)
+            }.value
+            isLoaded = true
+        }
+    }
+}
+
+extension RoutePoint {
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+extension TripRoute.EventKind {
+    var title: String {
+        switch self {
+        case .hardBraking: return "Гальмування"
+        case .hardAcceleration: return "Розгін"
+        case .distraction: return "Відволікання"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .hardBraking: return "exclamationmark.octagon.fill"
+        case .hardAcceleration: return "bolt.fill"
+        case .distraction: return "iphone"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .hardBraking: return VeloxColor.danger
+        case .hardAcceleration: return VeloxColor.medium
+        case .distraction: return VeloxColor.accent
         }
     }
 }

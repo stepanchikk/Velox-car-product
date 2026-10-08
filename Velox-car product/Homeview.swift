@@ -75,7 +75,9 @@ struct HomeView: View {
 
     private var cluster: some View {
         VStack(spacing: 20) {
-            ScoreGauge(score: stats.averageRecentScore, caption: gaugeCaption, lineWidth: 14)
+            // Оцінка водія: штрафи останніх поїздок на 10 км (довгі й короткі
+            // поїздки порівнюються чесно); оцінки окремих поїздок - на графіку нижче
+            ScoreGauge(score: stats.driverRating, caption: gaugeCaption, lineWidth: 14)
                 .frame(maxWidth: 250)
                 .frame(maxWidth: .infinity)
 
@@ -103,10 +105,19 @@ struct HomeView: View {
     }
 
     private var gaugeCaption: String {
-        switch stats.recentScoreCount {
-        case 0: return "Запишіть першу поїздку"
-        case 1: return "за першу поїздку"
-        default: return "середня за \(stats.recentScoreCount) останніх"
+        let count = stats.recentScoreCount
+        guard count > 0 else { return "Запишіть першу поїздку" }
+        return "оцінка водія за \(count) \(Self.tripsWord(count))"
+    }
+
+    /// 1 поїздку, 2 поїздки, 5 поїздок, 11 поїздок, 21 поїздку
+    static func tripsWord(_ count: Int) -> String {
+        let lastTwo = count % 100, last = count % 10
+        if (11...14).contains(lastTwo) { return "поїздок" }
+        switch last {
+        case 1: return "поїздку"
+        case 2...4: return "поїздки"
+        default: return "поїздок"
         }
     }
 

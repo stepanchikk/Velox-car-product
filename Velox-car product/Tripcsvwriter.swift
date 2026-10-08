@@ -1,5 +1,11 @@
 import Foundation
 
+/// Точка маршруту (широта і довгота в градусах)
+nonisolated struct RoutePoint: Hashable, Sendable {
+    let latitude: Double
+    let longitude: Double
+}
+
 /// Один рядок CSV поїздки (порядок колонок відповідає TripCSVWriter.header)
 nonisolated struct TelemetryRow {
     let time: TimeInterval          // секунди від «Старт»
@@ -8,15 +14,20 @@ nonisolated struct TelemetryRow {
     let event: String               // Event (може бути порожнім)
     let raw: Double                 // Raw_Y, G
     let userAcceleration: Vector3   // Ax, Ay, Az, G
+    let rotationRate: Vector3       // Gx, Gy, Gz, рад/с (гіроскоп в осях телефона)
     let tiltDegrees: Double         // Tilt_deg
     let score: Int                  // Score
     let speed: Double?              // Speed_mps (nil: GPS немає або дані застарілі)
+    let coordinate: RoutePoint?     // Lat, Lon (nil: маршрут не зберігається або немає GPS)
 
     var csvLine: String {
         let safeState = state.replacingOccurrences(of: ",", with: "")
         let a = userAcceleration
+        let g = rotationRate
         let speedText = speed.map { "\($0)" } ?? ""
-        return "\(time),\(filtered),\(safeState),\(event),\(raw),\(a.x),\(a.y),\(a.z),\(tiltDegrees),\(score),\(speedText)"
+        let lat = coordinate.map { "\($0.latitude)" } ?? ""
+        let lon = coordinate.map { "\($0.longitude)" } ?? ""
+        return "\(time),\(filtered),\(safeState),\(event),\(raw),\(a.x),\(a.y),\(a.z),\(g.x),\(g.y),\(g.z),\(tiltDegrees),\(score),\(speedText),\(lat),\(lon)"
     }
 }
 
@@ -34,8 +45,9 @@ nonisolated struct TripMetadata: Hashable, Sendable {
     }
 
     static let linePrefix = "#"
-    // Версія формату файлу: 2 - з рядками параметрів
-    static let formatVersion = "2"
+    // Версія формату файлу: 2 - з рядками параметрів,
+    // 3 - додано гіроскоп (Gx, Gy, Gz) і маршрут (Lat, Lon)
+    static let formatVersion = "3"
 
     private(set) var entries: [Entry] = []
 
@@ -102,10 +114,11 @@ nonisolated struct TripMetadata: Hashable, Sendable {
         ]
     }
 
-    /// Набір параметрів для нової поїздки
-    static func recording(startedAt: Date) -> TripMetadata {
+    /// Набір параметрів для нової поїздки; route - чи пишуться координати
+    static func recording(startedAt: Date, route: Bool = false) -> TripMetadata {
         var metadata = TripMetadata()
         metadata.set("format", formatVersion)
+        metadata.set("route", route ? "on" : "off")
         metadata.set("app", appVersion)
         metadata.set("device", deviceModel)
         metadata.set("os", osVersion)
@@ -184,7 +197,7 @@ nonisolated enum TripSaveResult: Equatable {
 /// рядки накопичуються в буфері й дописуються частинами, тому при аварійному
 /// завершенні застосунку втрачається не більше flushEveryRows останніх рядків.
 nonisolated final class TripCSVWriter {
-    static let header = "Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Tilt_deg,Score,Speed_mps"
+    static let header = "Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Gx,Gy,Gz,Tilt_deg,Score,Speed_mps,Lat,Lon"
 
     let flushEveryRows: Int
     private var pendingRows: [String] = []

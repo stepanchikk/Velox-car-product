@@ -156,6 +156,13 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     // Останні значення, які потрапляють у рядки CSV
     private var lastRawLongitudinal: Double = 0.0
     private var lastUserAcceleration: Vector3 = Vector3.zero
+    private var lastRotationRate: Vector3 = Vector3.zero
+
+    // Маршрут: пишеться лише з увімкненим «Зберігати маршрут» і доступом до геолокації.
+    // Налаштування фіксується на старті, щоб файл не змінював формат посеред поїздки.
+    private var recordRoute = false
+    private var lastCoordinate: RoutePoint?
+    private var lastCoordinateTime: TimeInterval = -.infinity
 
     // Єдиний годинник сесії: секунди від натискання «Старт».
     // CoreMotion рахує час від увімкнення пристрою (як systemUptime), а GPS дає
@@ -246,6 +253,13 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         if speed >= 0 {
             lastKnownSpeed = speed
             lastSpeedTime = time
+        }
+        // Координати з поганою точністю (вулиця між висотками) не пишемо
+        if recordRoute, location.horizontalAccuracy >= 0,
+           location.horizontalAccuracy <= VeloxConfig.routeMaxHorizontalAccuracy {
+            lastCoordinate = RoutePoint(latitude: location.coordinate.latitude,
+                                        longitude: location.coordinate.longitude)
+            lastCoordinateTime = time
         }
 
         guard isCalibrating else { return }
@@ -495,12 +509,15 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         resetData()
 
         let now = Date()
+        recordRoute = AppSettings.saveRouteEnabled && locationAuthorized
+        lastCoordinate = nil
+        lastCoordinateTime = -.infinity
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         // На початку файлу - параметри алгоритмів, версія застосунку і пристрій
         if let error = csvWriter.open(fileName: "Velox_Data_\(formatter.string(from: now)).csv",
-                                      metadata: TripMetadata.recording(startedAt: now)) {
+                                      metadata: TripMetadata.recording(startedAt: now, route: recordRoute)) {
             showMessage(error)
             return
         }
@@ -522,6 +539,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         callInProgress = false
         lastRawLongitudinal = 0.0
         lastUserAcceleration = Vector3.zero
+        lastRotationRate = Vector3.zero
         lastKnownSpeed = 0.0
         lastSpeedTime = -.infinity
 
@@ -641,6 +659,12 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     // краще за застаріле: analyzer.py пропускає порожні значення)
     private var freshSpeed: Double? {
         sessionTime() - lastSpeedTime <= Self.speedMaxAge ? lastKnownSpeed : nil
+    }
+
+    // Те саме для координат маршруту
+    private var freshCoordinate: RoutePoint? {
+        guard recordRoute, sessionTime() - lastCoordinateTime <= Self.speedMaxAge else { return nil }
+        return lastCoordinate
     }
 
     private func beginCalibration(event: String) {
@@ -810,6 +834,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         let raw = activeCalibration.longitudinal(userAcceleration)
         lastRawLongitudinal = raw
         lastUserAcceleration = userAcceleration
+        lastRotationRate = vector(motion.rotationRate)
         currentGForceY = filter.process(raw)
 
         var event = ""
@@ -839,9 +864,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
                                event: event,
                                raw: lastRawLongitudinal,
                                userAcceleration: lastUserAcceleration,
+                               rotationRate: lastRotationRate,
                                tiltDegrees: orientationDetector.lastAngle,
                                score: safetyScore,
-                               speed: freshSpeed)
+                               speed: freshSpeed,
+                               coordinate: freshCoordinate)
         if let error = csvWriter.append(row, isSample: isSample), stopOnError {
             stopRecording(reason: error)
         }
