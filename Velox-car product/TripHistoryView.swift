@@ -150,14 +150,44 @@ struct CompactLabelStyle: LabelStyle {
 
 struct TripDetailView: View {
     let trip: TripSummary
+    // Для щойно завершеної поїздки: причина зупинки чи попередження про запис
+    var notice: String? = nil
+    // Досягнення, які відкрила саме ця поїздка
+    var newAchievements: [Achievement] = []
+    // nil - заголовком буде дата поїздки
+    var title: String? = nil
 
     var body: some View {
         List {
+            if let notice = notice {
+                Section {
+                    Label(notice, systemImage: "exclamationmark.triangle")
+                        .font(.subheadline)
+                        .foregroundStyle(VeloxColor.medium)
+                }
+                .listRowBackground(VeloxColor.panel)
+            }
+
             if let score = trip.stats.score {
                 Section {
                     SafetyScoreCard(score: score)
                 }
                 .listRowBackground(Color.clear)
+            }
+
+            if !newAchievements.isEmpty {
+                Section {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(newAchievements) { achievement in
+                                AchievementBadge(achievement: achievement, compact: true)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    SectionTitle(newAchievements.count == 1 ? "Нове досягнення" : "Нові досягнення")
+                }
             }
 
             Section {
@@ -187,6 +217,10 @@ struct TripDetailView: View {
                 SectionTitle("Події")
             }
 
+            if let metadata = trip.stats.metadata {
+                parametersSection(metadata)
+            }
+
             Section {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Назва")
@@ -213,8 +247,40 @@ struct TripDetailView: View {
             }
         }
         .veloxScreenBackground()
-        .navigationTitle(trip.date.formatted(date: .abbreviated, time: .shortened))
+        .navigationTitle(title ?? trip.date.formatted(date: .abbreviated, time: .shortened))
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // Параметри, з якими записано поїздку (рядки "# ключ=значення" у CSV)
+    private func parametersSection(_ metadata: TripMetadata) -> some View {
+        Section {
+            if let value = metadata["maneuverThreshold"] {
+                LabeledContent("Поріг маневру", value: "\(value) G")
+            }
+            if let value = metadata["maneuverCooldown"] {
+                LabeledContent("Пауза між маневрами", value: "\(value) с")
+            }
+            if let value = metadata["filterAlpha"] {
+                LabeledContent("Коефіцієнт фільтра", value: value)
+            }
+            if let maneuver = metadata["maneuverPenalty"], let distraction = metadata["distractionPenalty"] {
+                LabeledContent("Штрафи", value: "-\(maneuver) / -\(distraction)")
+            }
+            if let value = metadata["app"] {
+                LabeledContent("Версія Velox", value: value)
+            }
+            if let device = metadata["device"] {
+                LabeledContent("Пристрій", value: [device, metadata["os"]].compactMap { $0 }.joined(separator: ", "))
+            }
+        } header: {
+            SectionTitle("Параметри запису")
+        } footer: {
+            if metadata.changedParameters.isEmpty {
+                Text("Штрафи: за маневр / за відволікання.")
+            } else {
+                Text("Поїздку записано з іншими параметрами, ніж у поточній версії, тому її оцінку не можна напряму порівнювати з новими.")
+            }
+        }
     }
 
     private var calibrationText: String {

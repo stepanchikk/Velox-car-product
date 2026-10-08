@@ -22,6 +22,13 @@ enum SessionState: Equatable {
     }
 }
 
+// Щойно збережена поїздка: інтерфейс відкриває її підсумок
+struct FinishedTrip: Equatable {
+    let fileName: String
+    // Причина зупинки або попередження про запис (nil - звичайна зупинка)
+    let notice: String?
+}
+
 // Доступ до геолокації з погляду калібрування напряму руху
 enum LocationAccess: Equatable {
     case notDetermined      // ще не запитували
@@ -86,6 +93,9 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     // Повідомлення для користувача (помилки та підтвердження)
     @Published var showAlert = false
     @Published var alertMessage = ""
+
+    // Заповнюється після збереження поїздки; MainTabView показує підсумок і очищає
+    @Published var finishedTrip: FinishedTrip?
 
     // Геолокація: стан доступу і діалоги перед стартом
     @Published var locationStatus: LocationAccess = .notDetermined
@@ -315,9 +325,13 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         // Спершу очищаємо дані і створюємо файл, потім вмикаємо сесію
         resetData()
 
+        let now = Date()
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        if let error = csvWriter.open(fileName: "Velox_Data_\(formatter.string(from: Date())).csv") {
+        // На початку файлу - параметри алгоритмів, версія застосунку і пристрій
+        if let error = csvWriter.open(fileName: "Velox_Data_\(formatter.string(from: now)).csv",
+                                      metadata: TripMetadata.recording(startedAt: now)) {
             showMessage(error)
             return
         }
@@ -369,20 +383,25 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.stopUpdatingLocation()
         UIApplication.shared.isIdleTimerDisabled = false
 
-        let summary: String
-        if csvWriter.recordedSamples > 0 {
-            let safetyClass = SafetyClass.classify(safetyScore)
-            summary = "Safety Score: \(safetyScore) (\(safetyClass.label))\n"
-                + "Маневри: \(hardBrakingCount + hardAccelerationCount), відволікання: \(distractionCount)"
-        } else {
-            summary = ""
+        let result = csvWriter.finish()
+        switch result {
+        case .saved(let fileName, let warning):
+            // Підсумок (оцінка, події, файл) показує екран поїздки, тож окреме
+            // повідомлення потрібне лише для причини зупинки чи помилки запису
+            let notice = [reason, warning].compactMap { $0 }.joined(separator: "\n")
+            finishedTrip = FinishedTrip(fileName: fileName, notice: notice.isEmpty ? nil : notice)
+        case .empty, .notCreated:
+            showMessage([reason, result.message].compactMap { $0 }.joined(separator: "\n"))
         }
+    }
 
-        let saveResult = csvWriter.finish()
-        let fullMessage = [reason, summary.isEmpty ? nil : summary, saveResult]
+    /// Запасний варіант, якщо збережений файл не вдалося відкрити в історії
+    func showSavedTripMessage(_ trip: FinishedTrip) {
+        let summary = "Safety Score: \(safetyScore) (\(SafetyClass.classify(safetyScore).label))\n"
+            + "Маневри: \(hardBrakingCount + hardAccelerationCount), відволікання: \(distractionCount)"
+        showMessage([trip.notice, summary, "Дані поїздки збережено: \(trip.fileName)"]
             .compactMap { $0 }
-            .joined(separator: "\n")
-        showMessage(fullMessage)
+            .joined(separator: "\n"))
     }
 
     // Ручне перекалібрування (кнопка в інтерфейсі). Дозволене лише коли авто

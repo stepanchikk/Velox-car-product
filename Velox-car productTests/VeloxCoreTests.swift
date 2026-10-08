@@ -209,7 +209,7 @@ final class TripCSVWriterTests: XCTestCase {
         XCTAssertEqual(partial.split(separator: "\n").count, 4)   // заголовок + 3 рядки
 
         XCTAssertNil(writer.append(row(time: 3, event: "Distraction"), isSample: false))
-        XCTAssertTrue(writer.finish().contains(name))
+        XCTAssertEqual(writer.finish(), .saved(fileName: name, warning: nil))
         XCTAssertEqual(writer.recordedSamples, 3)                  // службовий рядок не рахується
 
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
@@ -223,8 +223,83 @@ final class TripCSVWriterTests: XCTestCase {
         let writer = TripCSVWriter()
         XCTAssertNil(writer.open(fileName: name))
         XCTAssertNil(writer.append(row(time: 0, event: "CalibrationStart"), isSample: false))
-        XCTAssertTrue(writer.finish().contains("немає"))
+        XCTAssertEqual(writer.finish(), .empty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(writer.finish(), .notCreated)               // повторний виклик нічого не ламає
+    }
+
+    // Параметри запису стоять перед заголовком, і парсер історії їх читає
+    func testMetadataIsWrittenBeforeHeaderAndParsedBack() throws {
+        let name = "VeloxTest_\(UUID().uuidString).csv"
+        let url = documentsURL(name)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let metadata = TripMetadata.recording(startedAt: Date())
+        let writer = TripCSVWriter()
+        XCTAssertNil(writer.open(fileName: name, metadata: metadata))
+        XCTAssertNil(writer.append(row(time: 0.1), isSample: true))
+        _ = writer.finish()
+
+        let text = try String(contentsOf: url, encoding: .utf8)
+        let lines = text.split(separator: "\n")
+        XCTAssertEqual(String(lines[0]), "# format=\(TripMetadata.formatVersion)")
+        XCTAssertEqual(String(lines[metadata.entries.count]), TripCSVWriter.header)
+
+        let stats = try XCTUnwrap(TripCSVParser.parse(text))
+        XCTAssertEqual(stats.samples, 1)
+        XCTAssertEqual(stats.skippedLines, 0)
+        let parsed = try XCTUnwrap(stats.metadata)
+        XCTAssertEqual(parsed, metadata)
+        XCTAssertEqual(parsed.double("maneuverThreshold"), VeloxConfig.maneuverThreshold)
+        XCTAssertEqual(parsed["maneuverPenalty"], "\(VeloxConfig.maneuverPenalty)")
+        XCTAssertTrue(parsed.changedParameters.isEmpty)
+    }
+}
+
+// MARK: - Параметри запису
+
+final class TripMetadataTests: XCTestCase {
+
+    func testLineParsing() {
+        XCTAssertEqual(TripMetadata.parseLine("# maneuverThreshold=0.4"),
+                       TripMetadata.Entry(key: "maneuverThreshold", value: "0.4"))
+        XCTAssertEqual(TripMetadata.parseLine("#app = 1.0 (5)"),
+                       TripMetadata.Entry(key: "app", value: "1.0 (5)"))
+        XCTAssertNil(TripMetadata.parseLine("# просто коментар"))
+        XCTAssertNil(TripMetadata.parseLine("# =0.4"))
+        XCTAssertNil(TripMetadata.parseLine("Timestamp,Filtered_Y"))
+    }
+
+    func testSetReplacesAndCleansValue() {
+        var metadata = TripMetadata()
+        metadata.set("app", "1.0")
+        metadata.set("app", "2.0,\nbeta")
+        XCTAssertEqual(metadata.entries.count, 1)
+        XCTAssertEqual(metadata["app"], "2.0  beta")       // кома і перенос рядка прибрані
+        XCTAssertEqual(metadata.lines, ["# app=2.0  beta"])
+    }
+
+    func testNumberFormatting() {
+        XCTAssertEqual(TripMetadata.format(2), "2")
+        XCTAssertEqual(TripMetadata.format(3.0), "3")
+        XCTAssertEqual(TripMetadata.format(0.4), "0.4")
+        XCTAssertEqual(TripMetadata.format(0.1), "0.1")
+    }
+
+    func testChangedParameters() {
+        var metadata = TripMetadata.recording(startedAt: Date())
+        XCTAssertTrue(metadata.changedParameters.isEmpty)
+        metadata.set("maneuverThreshold", "0.35")
+        XCTAssertEqual(metadata.changedParameters, ["maneuverThreshold"])
+    }
+
+    func testOldFileHasNoMetadata() throws {
+        let stats = try XCTUnwrap(TripCSVParser.parse("Timestamp,Filtered_Y,State\n0.1,0,Запис іде\n"))
+        XCTAssertNil(stats.metadata)
+    }
+
+    func testFileWithOnlyMetadataIsNotATrip() {
+        XCTAssertNil(TripCSVParser.parse("# format=2\n# app=1.0\n"))
     }
 }
 

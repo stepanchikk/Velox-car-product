@@ -20,6 +20,11 @@ Velox: аналітика телеметрії поїздок.
 Файл шукається поруч зі скриптом і в каталогах проєкту на два рівні вгору;
 якщо його не знайдено, використовуються значення за замовчуванням із попередженням.
 
+Нові версії застосунку пишуть на початку CSV рядки "# ключ=значення" з
+параметрами, з якими записано поїздку. Для перевірки подій і Safety Score
+такого файлу беруться саме вони, а не поточні з VeloxConfig.swift: так
+старі поїздки перевіряються коректно навіть після зміни порога.
+
 Результати (PNG і summary.csv) зберігаються в підкаталог figures/.
 
 Залежності: pip install pandas matplotlib numpy
@@ -118,10 +123,46 @@ def apply_config(path):
     return path
 
 
+def read_metadata(path):
+    """Рядки "# ключ=значення" на початку файлу. Повертає (словник, кількість рядків)."""
+    metadata = {}
+    count = 0
+    with open(path, encoding="utf-8-sig") as f:
+        for line in f:
+            if not line.startswith("#"):
+                break
+            count += 1
+            body = line[1:].strip()
+            key, sep, value = body.partition("=")
+            if sep and key.strip():
+                metadata[key.strip()] = value.strip()
+    return metadata, count
+
+
+def trip_params(metadata):
+    """Параметри алгоритмів для поїздки: з рядків "#" файлу, а яких там немає -
+    поточні (з VeloxConfig.swift). Повертає (словник за іменами VeloxConfig,
+    список параметрів, що відрізняються від поточних)."""
+    params, changed = {}, []
+    for key, (var, cast, _default) in CONFIG_KEYS.items():
+        current = globals()[var]
+        value = current
+        if key in metadata:
+            try:
+                value = cast(float(metadata[key]))
+            except ValueError:
+                print(f"  Увага: некоректне значення {key}={metadata[key]!r} у файлі, взято поточне")
+        if abs(float(value) - float(current)) > 1e-9:
+            changed.append(f"{key}: {value} (зараз {current})")
+        params[key] = value
+    return params, changed
+
+
 def load_trip(path):
     """Читає CSV поїздки. Повертає словник з даними або None, якщо файл не підходить."""
     try:
-        df = pd.read_csv(path)
+        metadata, n_meta = read_metadata(path)
+        df = pd.read_csv(path, skiprows=n_meta)
     except Exception as e:
         print(f"  Пропуск {os.path.basename(path)}: не вдалося прочитати ({e})")
         return None
@@ -188,12 +229,17 @@ def load_trip(path):
 
     speed = motion["Speed_mps"].to_numpy(dtype=float) if has_speed else None
 
+    params, changed = trip_params(metadata)
+    if changed:
+        print(f"  Увага: {os.path.basename(path)} записано з іншими параметрами: {'; '.join(changed)}. "
+              f"Для перевірки подій цього файлу взято параметри з файлу.")
+
     if has_raw and motion["Raw_Y"].notna().all():
         raw = motion["Raw_Y"].to_numpy(dtype=float)
         raw_source = "записаний у CSV"
     else:
-        raw = reconstruct_raw(y, ALPHA)
-        raw_source = f"відновлений (alpha={ALPHA})"
+        raw = reconstruct_raw(y, params["filterAlpha"])
+        raw_source = f"відновлений (alpha={params['filterAlpha']})"
 
     if np.nanmax(np.abs(raw)) > 5:
         print(f"  Увага: {os.path.basename(path)}: відновлений сирий сигнал перевищує 5 G. "
@@ -212,6 +258,9 @@ def load_trip(path):
         "speed": speed,
         "has_event_column": has_event_column,
         "n_extra_rows": int(np.count_nonzero(is_extra)),
+        "metadata": metadata,
+        "params": params,
+        "params_changed": bool(changed),
     }
 
 
@@ -300,16 +349,20 @@ def detect_maneuvers(t, y, threshold, cooldown=None):
     return found
 
 
-def safety_score(maneuvers, distractions):
-    """Формула застосунку (SafetyScoreCalculator): 100 - штрафи, не менше 0."""
-    penalty = MANEUVER_PENALTY * maneuvers + DISTRACTION_PENALTY * distractions
-    return max(0, 100 - penalty)
+def safety_score(maneuvers, distractions, params=None):
+    """Формула застосунку (SafetyScoreCalculator): 100 - штрафи, не менше 0.
+    params - параметри поїздки (trip_params); без них - поточні."""
+    m_pen = params["maneuverPenalty"] if params else MANEUVER_PENALTY
+    d_pen = params["distractionPenalty"] if params else DISTRACTION_PENALTY
+    return max(0, 100 - (m_pen * maneuvers + d_pen * distractions))
 
 
-def classify_score(score):
-    if score >= SAFE_SCORE_MIN:
+def classify_score(score, params=None):
+    safe = params["safeScoreMin"] if params else SAFE_SCORE_MIN
+    medium = params["mediumScoreMin"] if params else MEDIUM_SCORE_MIN
+    if score >= safe:
         return "Безпечний"
-    if score >= MEDIUM_SCORE_MIN:
+    if score >= medium:
         return "Середній"
     return "Небезпечний"
 
@@ -575,19 +628,22 @@ def summarize(trips):
         logged_brake = int(ev.eq("HardBraking").sum())
         logged_accel = int(ev.eq("HardAcceleration").sum())
         logged_distract = int(ev.eq("Distraction").sum())
-        sim = detect_maneuvers(t, y, THRESHOLD)
+        p = trip["params"]
+        # Перерахунок з тими параметрами, з якими працював застосунок під час запису
+        sim = detect_maneuvers(t, y, p["maneuverThreshold"], p["maneuverCooldown"])
         sim_brake = sum(1 for _, k in sim if k == "HardBraking")
         sim_accel = sum(1 for _, k in sim if k == "HardAcceleration")
 
         if trip["has_event_column"]:
-            score_computed = safety_score(logged_brake + logged_accel, logged_distract)
-            score_computed_label = f"{score_computed} ({classify_score(score_computed)})"
+            score_computed = safety_score(logged_brake + logged_accel, logged_distract, p)
+            score_computed_label = f"{score_computed} ({classify_score(score_computed, p)})"
         else:
             logged_brake = logged_accel = logged_distract = na
             score_computed_label = na
 
         score_logged = trip["final_score_logged"]
-        score_logged_label = f"{int(score_logged)} ({classify_score(int(score_logged))})" if score_logged is not None else na
+        score_logged_label = (f"{int(score_logged)} ({classify_score(int(score_logged), p)})"
+                              if score_logged is not None else na)
 
         rows.append({
             "Файл": trip["name"],
@@ -600,11 +656,15 @@ def summarize(trips):
             "Відволікань (лог)": logged_distract,
             "Гальмувань (перерахунок)": sim_brake,
             "Розгонів (перерахунок)": sim_accel,
-            "Час вище порога, %": round(100.0 * float(np.mean(np.abs(y) > THRESHOLD)), 2),
+            "Час вище порога, %": round(100.0 * float(np.mean(np.abs(y) > p["maneuverThreshold"])), 2),
             "Safety Score (лог)": score_logged_label,
             "Safety Score (розрахунок)": score_computed_label,
             "Кореляція з GPS (r)": round(trip["gps"]["r"], 2) if trip.get("gps") else na,
             "Сирий сигнал": trip["raw_source"],
+            "Поріг запису, G": p["maneuverThreshold"],
+            "Параметри": ("з файлу, відрізняються від поточних" if trip["params_changed"]
+                          else "з файлу" if trip["metadata"] else "поточні (у файлі немає)"),
+            "Версія застосунку": trip["metadata"].get("app", na),
         })
     return pd.DataFrame(rows)
 
@@ -621,8 +681,8 @@ def check_consistency(summary):
         print("Перевірка: події в CSV збігаються з перерахунком (поріг, пауза).")
     else:
         print("Перевірка: є розбіжності між подіями в CSV і перерахунком "
-              "(можливо, змінювався поріг у додатку, або файл записаний до "
-              "виправлення роздільної паузи гальмування/розгону):")
+              "(для файлів без рядків параметрів можливо, що змінювався поріг у додатку, "
+              "або файл записаний до виправлення роздільної паузи гальмування/розгону):")
         print(bad[["Файл", "Гальмувань (лог)", "Гальмувань (перерахунок)",
                    "Розгонів (лог)", "Розгонів (перерахунок)"]].to_string(index=False))
 
@@ -681,6 +741,10 @@ def main():
         trips.append(trip)
         note = f", службових рядків (Distraction, калібрування): {trip['n_extra_rows']}" if trip["n_extra_rows"] else ""
         print(f"Файл: {trip['name']}  (сирий сигнал: {trip['raw_source']}{note})")
+        if trip["metadata"]:
+            md = trip["metadata"]
+            print(f"  -> Записано: Velox {md.get('app', '?')}, {md.get('device', '?')}, {md.get('os', '?')}, "
+                  f"поріг {trip['params']['maneuverThreshold']} G")
         print(f"  -> Макс. розгін: {np.max(trip['y']):.3f} G")
         print(f"  -> Макс. гальмування (модуль): {abs(np.min(trip['y'])):.3f} G\n")
 

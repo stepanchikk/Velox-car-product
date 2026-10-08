@@ -28,6 +28,8 @@ nonisolated struct TripStats: Hashable, Sendable {
     var calibration: TripCalibrationKind = .unknown
     // Пропущені неповні рядки (наприклад, обірваний останній рядок після збою)
     var skippedLines = 0
+    // Параметри запису з рядків "# ключ=значення"; nil для файлів старих версій
+    var metadata: TripMetadata?
 
     var maneuvers: Int? {
         guard let b = hardBrakings, let a = hardAccelerations else { return nil }
@@ -43,23 +45,33 @@ nonisolated enum TripCSVParser {
 
     /// Підсумок поїздки за вмістом CSV або nil, якщо це не файл поїздки Velox.
     /// Колонки шукаються за назвою, тому підтримуються всі попередні формати.
+    /// Рядки "# ключ=значення" перед заголовком - параметри запису (TripMetadata).
     static func parse(_ text: String) -> TripStats? {
         let lines = text.split(whereSeparator: \.isNewline)
-        guard let headerLine = lines.first else { return nil }
-        let header = headerLine.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        var metadata = TripMetadata()
+        var headerIndex = lines.startIndex
+        while headerIndex < lines.endIndex, lines[headerIndex].hasPrefix(TripMetadata.linePrefix) {
+            if let entry = TripMetadata.parseLine(lines[headerIndex]) {
+                metadata.set(entry.key, entry.value)
+            }
+            headerIndex += 1
+        }
+        guard headerIndex < lines.endIndex else { return nil }
+        let header = lines[headerIndex].split(separator: ",", omittingEmptySubsequences: false).map(String.init)
         guard let iTime = header.firstIndex(of: "Timestamp") else { return nil }
         let iEvent = header.firstIndex(of: "Event")
         let iScore = header.firstIndex(of: "Score")
         let iSpeed = header.firstIndex(of: "Speed_mps")
 
         var stats = TripStats()
+        stats.metadata = metadata.isEmpty ? nil : metadata
         var brakings = 0, accelerations = 0, distractions = 0
         var lastScore: Int?
         var distance = 0.0
         var hasSpeed = false
         var previous: (time: Double, speed: Double)?
 
-        for line in lines.dropFirst() {
+        for line in lines[(headerIndex + 1)...] {
             let fields = line.split(separator: ",", omittingEmptySubsequences: false)
             guard fields.count == header.count, let time = Double(fields[iTime]) else {
                 stats.skippedLines += 1
