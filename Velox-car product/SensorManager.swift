@@ -73,6 +73,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     private static let manualRecalibrationMaxSpeed: Double = VeloxConfig.manualRecalibrationMaxSpeed
     // Швидкість GPS старша за цей час вважається невідомою (тунель, паркінг)
     private static let speedMaxAge: TimeInterval = 3.0
+    // Розбіжність напряму за поворотами з поточним, після якої калібрування виправляється
+    private static let yawCorrectionAngle: Double = 20.0
 
     // isRecording = сесія активна (калібрування або запис)
     @Published var isRecording = false
@@ -133,6 +135,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
 
     // Калібрування в цій поїздці вже вдавалось: далі йдуть перекалібрування в русі
     private var hasCalibrated = false
+    // Без GPS напрям руху перевіряється за поворотами (див. checkYawEstimate)
+    private var yawEstimator: YawForwardEstimator?
+    // Наступна перевірка - коли накопичиться стільки "енергії" поворотів
+    private var nextYawCheckEnergy: Double = YawForwardEstimator.requiredEnergy
+    private var yawDirectionChecked = false
     // Час сесії, коли повторити невдале перекалібрування
     private var retryCalibrationAt: TimeInterval?
 
@@ -509,6 +516,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         orientationDetector.reset()
         calibration = nil
         hasCalibrated = false
+        yawEstimator = nil
         retryCalibrationAt = nil
         pendingFocusLoss = nil
         callInProgress = false
@@ -699,12 +707,49 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
             let percent = Int((result.forwardQuality * 100).rounded())
             calibrationInfo = "Калібрування завершено (GPS), якість \(percent)%"
             appendEventRow(event: "CalibrationDone")
-        case .fallbackFlatMount:
-            calibrationInfo = "Калібрування без GPS: припущено, що телефон лежить екраном вгору, верхом вперед"
+        case .fallbackFlatMount, .yawCorrelation:
+            calibrationInfo = "Калібрування без GPS: напрям руху уточниться на перших поворотах"
             appendEventRow(event: "CalibrationDoneFallback")
         }
 
+        // Без GPS напрям руху - лише припущення про кріплення: перевіряємо його
+        // за поворотами під час поїздки
+        if result.forwardSource == .gps {
+            yawEstimator = nil
+        } else {
+            yawEstimator = YawForwardEstimator(up: result.up)
+            nextYawCheckEnergy = YawForwardEstimator.requiredEnergy
+            yawDirectionChecked = false
+        }
+
         triggerHapticFeedback(style: .success)
+    }
+
+    /// Порівнює напрям руху, знайдений за поворотами, з поточним і за потреби
+    /// виправляє калібрування. Перевірка повторюється щоразу, коли поворотів
+    /// стає вдвічі більше, тож оцінка з часом лише уточнюється.
+    private func checkYawEstimate(time: TimeInterval) {
+        guard let estimator = yawEstimator, let current = calibration,
+              estimator.energy >= nextYawCheckEnergy,
+              let forward = estimator.estimate else { return }
+        nextYawCheckEnergy = estimator.energy * 2
+
+        let angle = OrientationCalibrator.angleDegrees(forward, current.forward)
+        if angle > Self.yawCorrectionAngle {
+            calibration = CalibrationResult(up: current.up, forward: forward,
+                                            forwardSource: .yawCorrelation,
+                                            forwardQuality: estimator.consistency)
+            // Нова вісь: фільтр і паузи маневрів починають з нуля
+            filter.reset()
+            currentGForceY = 0.0
+            maneuverDetector.reset()
+            calibrationInfo = "Напрям руху виправлено за поворотами (на \(Int(angle.rounded()))°)"
+            appendEventRow(event: "CalibrationDirectionFix", time: time)
+        } else if !yawDirectionChecked {
+            calibrationInfo = "Напрям руху підтверджено за поворотами"
+            appendEventRow(event: "CalibrationDirectionConfirmed", time: time)
+        }
+        yawDirectionChecked = true
     }
 
     // MARK: - Обробка даних
@@ -754,8 +799,15 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
             return
         }
 
+        // Без GPS: перевірка напряму руху за поворотами (може замінити калібрування)
+        if let estimator = yawEstimator {
+            estimator.addSample(userAcceleration: userAcceleration, rotationRate: vector(motion.rotationRate))
+            checkYawEstimate(time: time)
+        }
+        let activeCalibration = self.calibration ?? calibration
+
         // Поздовжнє прискорення в осях автомобіля, далі Low-Pass фільтр
-        let raw = calibration.longitudinal(userAcceleration)
+        let raw = activeCalibration.longitudinal(userAcceleration)
         lastRawLongitudinal = raw
         lastUserAcceleration = userAcceleration
         currentGForceY = filter.process(raw)

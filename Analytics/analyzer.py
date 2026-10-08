@@ -483,6 +483,9 @@ def plot_raw_vs_filtered(trip, out_dir):
     for episode in distraction_episodes(events):
         for d_start, d_end in episode:
             ax.axvspan(d_start, d_end, color=DISTRACTION_COLOR, alpha=0.12, label="Телефон у руках")
+    for ts in events[events["Event"] == "CalibrationDirectionFix"]["Timestamp"]:
+        ax.axvline(ts, color="black", linestyle="--", linewidth=1.2, alpha=0.7,
+                   label="Напрям руху виправлено за поворотами (без GPS)")
     for ts in events[events["Event"].str.startswith("Call")]["Timestamp"]:
         ax.axvline(ts, color=CALL_COLOR, linestyle="-.", linewidth=1.2, alpha=0.8,
                    label="Дзвінок (без штрафу, якщо без рук)")

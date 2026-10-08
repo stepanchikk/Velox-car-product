@@ -473,6 +473,92 @@ final class ForwardCalibratorTests: XCTestCase {
     }
 }
 
+// MARK: - Напрям руху без GPS (за поворотами)
+
+final class YawForwardEstimatorTests: XCTestCase {
+
+    // Повороти на швидкості 10 м/с: доцентрове прискорення v * omega уздовж
+    // up x forward, плюс гальмування перед кожним поворотом (заважає оцінці)
+    private func drive(_ estimator: YawForwardEstimator, up: Vector3, forward: Vector3,
+                       turns: [Double], speed: Double = 10) {
+        let side = up.cross(forward)
+        for omega in turns {
+            for _ in 0..<20 {   // гальмування 0.15 G перед поворотом, без повороту
+                estimator.addSample(userAcceleration: forward * -0.15, rotationRate: .zero)
+            }
+            for _ in 0..<40 {   // 4 с повороту з легким гальмуванням
+                let acceleration = side * (speed * omega / 9.81) + forward * -0.05
+                estimator.addSample(userAcceleration: acceleration, rotationRate: up * omega)
+            }
+        }
+    }
+
+    func testFindsForwardFromLeftAndRightTurns() {
+        let up = Vector3(x: 0, y: 0, z: 1)
+        let forward = Vector3(x: 1, y: 0, z: 0)          // телефон лежить боком (як у реальній поїздці)
+        let estimator = YawForwardEstimator(up: up)
+        // Ліві й праві повороти попарно однакові: гальмування в них взаємно гаситься
+        drive(estimator, up: up, forward: forward, turns: [0.2, -0.2, 0.25, -0.25])
+        assertVector(estimator.estimate, forward, accuracy: 1e-6)
+        XCTAssertEqual(estimator.consistency, 1, accuracy: 0.05)
+    }
+
+    // Нерівні повороти: гальмування гаситься не повністю, похибка кілька градусів
+    func testUnequalTurnsGiveSmallError() throws {
+        let up = Vector3(x: 0, y: 0, z: 1)
+        let forward = Vector3(x: 1, y: 0, z: 0)
+        let estimator = YawForwardEstimator(up: up)
+        drive(estimator, up: up, forward: forward, turns: [0.2, -0.25])
+        let estimate = try XCTUnwrap(estimator.estimate)
+        XCTAssertLessThan(OrientationCalibrator.angleDegrees(estimate, forward), 3)
+    }
+
+    func testArbitraryOrientation() {
+        let up = Vector3(x: 0.3, y: -0.5, z: 0.81).normalized()!
+        let forward = up.cross(Vector3(x: 1, y: 0, z: 0)).normalized()!
+        let estimator = YawForwardEstimator(up: up)
+        drive(estimator, up: up, forward: forward, turns: [-0.2, 0.2, 0.3, -0.3])
+        assertVector(estimator.estimate, forward, accuracy: 1e-6)
+    }
+
+    // Розворот заднім ходом на малій швидкості не перекидає оцінку
+    // (похибка близько 12 градусів, далі зменшується з кожним поворотом)
+    func testSlowReverseDoesNotFlipDirection() throws {
+        let up = Vector3(x: 0, y: 0, z: 1)
+        let forward = Vector3(x: 0, y: 1, z: 0)
+        let estimator = YawForwardEstimator(up: up)
+        drive(estimator, up: up, forward: forward, turns: [0.3], speed: -1.5)
+        drive(estimator, up: up, forward: forward, turns: [0.2, -0.2])
+        let estimate = try XCTUnwrap(estimator.estimate)
+        XCTAssertLessThan(OrientationCalibrator.angleDegrees(estimate, forward), 15)
+    }
+
+    func testNoTurnsNoEstimate() {
+        let up = Vector3(x: 0, y: 0, z: 1)
+        let estimator = YawForwardEstimator(up: up)
+        for i in 0..<600 {   // хвилина прямої їзди з розгонами й гальмуваннями
+            let a = Vector3(x: 0, y: 0.2 * sin(Double(i) * 0.05), z: 0)
+            estimator.addSample(userAcceleration: a, rotationRate: Vector3(x: 0, y: 0, z: 0.01))
+        }
+        XCTAssertNil(estimator.estimate)
+        XCTAssertEqual(estimator.energy, 0)
+    }
+
+    // Обертання без відповідного бокового прискорення (телефон крутять у руках
+    // на стоянці) дає неузгоджений сигнал, і рішення не приймається
+    func testInconsistentSignalGivesNoEstimate() {
+        let up = Vector3(x: 0, y: 0, z: 1)
+        let estimator = YawForwardEstimator(up: up)
+        for i in 0..<200 {
+            let omega = i % 2 == 0 ? 0.3 : -0.3
+            let a = i % 4 < 2 ? Vector3(x: 0.1, y: 0, z: 0) : Vector3(x: -0.1, y: 0, z: 0)
+            estimator.addSample(userAcceleration: a, rotationRate: up * omega)
+        }
+        XCTAssertGreaterThan(estimator.energy, YawForwardEstimator.requiredEnergy)
+        XCTAssertNil(estimator.estimate)
+    }
+}
+
 // MARK: - Повне калібрування
 
 final class OrientationCalibratorTests: XCTestCase {
@@ -543,12 +629,28 @@ final class OrientationCalibratorTests: XCTestCase {
         XCTAssertEqual(progress, 0)
     }
 
-    func testVerticalPhoneWithoutLocationFails() {
+    // Телефон стоїть у тримачі екраном до водія: без GPS вперед - задня кришка (-Z)
+    func testVerticalPhoneWithoutLocationUsesBackOfPhone() {
         let cal = OrientationCalibrator()
         cal.reset(locationAvailable: false)
         let outcome = feedStill(cal, gravity: Vector3(x: 0, y: -1, z: 0), count: 20)
-        guard case .failed = outcome else {
-            return XCTFail("без GPS напрям для вертикального телефона визначити неможливо, отримано \(outcome)")
+        guard case .finished(let result) = outcome else {
+            return XCTFail("очікувалось завершення, отримано \(outcome)")
+        }
+        assertVector(result.forward, Vector3(x: 0, y: 0, z: -1))
+        XCTAssertEqual(result.forwardSource, .fallbackFlatMount)
+    }
+
+    // Хоча б одна з осей (+Y чи -Z) завжди дає горизонтальний напрям
+    func testFallbackForwardExistsForAnyOrientation() {
+        for i in 0..<200 {
+            let a = Double(i) * 0.37, b = Double(i) * 0.91
+            let up = Vector3(x: cos(a) * sin(b), y: sin(a) * sin(b), z: cos(b))
+            guard let forward = OrientationCalibrator.fallbackForward(up: up) else {
+                return XCTFail("немає напряму для up = \(up)")
+            }
+            XCTAssertEqual(forward.dot(up), 0, accuracy: 1e-9)       // горизонтальний
+            XCTAssertEqual(forward.length, 1, accuracy: 1e-9)
         }
     }
 

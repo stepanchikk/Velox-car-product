@@ -290,6 +290,7 @@ struct TripDetailView: View {
         switch trip.stats.calibration {
         case .gps: return "за GPS"
         case .fallback: return "без GPS (спрощене)"
+        case .fallbackChecked: return "без GPS, напрям за поворотами"
         case .unknown: return "немає даних"
         }
     }

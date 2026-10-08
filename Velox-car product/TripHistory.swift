@@ -11,6 +11,7 @@ nonisolated enum TripCalibrationKind: Hashable, Sendable {
     case unknown    // у файлі немає подій калібрування (старі версії)
     case gps        // CalibrationDone: напрям руху визначено за GPS
     case fallback   // CalibrationDoneFallback: спрощене калібрування без GPS
+    case fallbackChecked    // без GPS, напрям перевірено або виправлено за поворотами
 }
 
 nonisolated struct TripStats: Hashable, Sendable {
@@ -103,6 +104,8 @@ nonisolated enum TripCSVParser {
                 }
             case "CalibrationDone": stats.calibration = .gps
             case "CalibrationDoneFallback": stats.calibration = .fallback
+            case "CalibrationDirectionFix", "CalibrationDirectionConfirmed":
+                if stats.calibration == .fallback { stats.calibration = .fallbackChecked }
             default: break
             }
 
