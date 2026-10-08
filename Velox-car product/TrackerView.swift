@@ -60,7 +60,8 @@ struct TrackerView: View {
                 .padding(.horizontal)
 
             // Штрафні бали (Відволікання)
-            EventCard(title: "Відволікання (-5 за кожне)", count: sensorManager.distractionCount, color: .purple)
+            EventCard(title: "Відволікання (-\(VeloxConfig.distractionPenalty) за кожне)",
+                      count: sensorManager.distractionCount, color: .purple)
                 .padding(.horizontal)
             
             // Лічильники подій (Маневри)

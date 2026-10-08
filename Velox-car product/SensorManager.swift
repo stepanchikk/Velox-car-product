@@ -51,12 +51,12 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let locationManager = CLLocationManager()
 
     // Поріг перевантаження (також використовується в TrackerView для підсвічування)
-    static let maneuverThreshold: Double = 0.4
+    static let maneuverThreshold: Double = VeloxConfig.maneuverThreshold
     // Коефіцієнт Low-Pass фільтра
-    static let filterAlpha: Double = 0.2
+    static let filterAlpha: Double = VeloxConfig.filterAlpha
     // Ручне перекалібрування дозволене лише "майже на стоянці" (безпека:
     // не заохочуємо водія натискати кнопки під час руху)
-    private static let manualRecalibrationMaxSpeed: Double = 2.0  // м/с (~7 км/год)
+    private static let manualRecalibrationMaxSpeed: Double = VeloxConfig.manualRecalibrationMaxSpeed
     // Швидкість GPS старша за цей час вважається невідомою (тунель, паркінг)
     private static let speedMaxAge: TimeInterval = 3.0
 
@@ -96,7 +96,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let calibrator = OrientationCalibrator()
     private var calibration: CalibrationResult?
     private var filter = LowPassFilter(alpha: SensorManager.filterAlpha)
-    private var maneuverDetector = ManeuverDetector(threshold: SensorManager.maneuverThreshold)
+    private var maneuverDetector = ManeuverDetector(threshold: SensorManager.maneuverThreshold,
+                                                    cooldown: VeloxConfig.maneuverCooldown)
     private var distractionPolicy = DistractionPolicy()
     private var orientationDetector = OrientationChangeDetector()
     private let csvWriter = TripCSVWriter()
@@ -344,7 +345,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         // Кожен запис починається з калібрування
         beginCalibration(event: "CalibrationStart")
 
-        motionManager.deviceMotionUpdateInterval = 0.1
+        motionManager.deviceMotionUpdateInterval = VeloxConfig.sampleInterval
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] (motion, error) in
             guard let self = self else { return }
             if let error = error {

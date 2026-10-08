@@ -13,6 +13,12 @@ Velox: аналітика телеметрії поїздок.
     python analyzer.py                 # CSV беруться з каталогу, де лежить скрипт
     python analyzer.py шлях/до/каталогу  # CSV з іншого каталогу
     python analyzer.py --show          # додатково показати вікна графіків
+    python analyzer.py --config шлях/до/VeloxConfig.swift   # явно вказати параметри
+
+Параметри алгоритмів (alpha, поріг, паузи, штрафи, межі класів) скрипт бере
+з файлу VeloxConfig.swift проєкту, того самого, що використовує застосунок.
+Файл шукається поруч зі скриптом і в каталогах проєкту на два рівні вгору;
+якщо його не знайдено, використовуються значення за замовчуванням із попередженням.
 
 Результати (PNG і summary.csv) зберігаються в підкаталог figures/.
 
@@ -27,6 +33,7 @@ x[n] = (y[n] - (1-alpha)*y[n-1]) / alpha. Якщо в CSV є колонка Raw_
 import argparse
 import glob
 import os
+import re
 import sys
 
 import numpy as np
@@ -34,16 +41,32 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
-# ---------- Параметри, що відповідають додатку ----------
-ALPHA = 0.2                # коефіцієнт Low-Pass фільтра в SensorManager
-THRESHOLD = 0.4            # поріг маневру, G
-COOLDOWN = 3.0              # пауза між двома маневрами одного типу, с
+# ---------- Параметри застосунку (джерело: VeloxConfig.swift) ----------
+CONFIG_FILE = "VeloxConfig.swift"
+# імʼя в VeloxConfig.swift -> (глобальна змінна скрипта, тип, значення за замовчуванням)
+CONFIG_KEYS = {
+    "filterAlpha": ("ALPHA", float, 0.2),
+    "maneuverThreshold": ("THRESHOLD", float, 0.4),
+    "maneuverCooldown": ("COOLDOWN", float, 3.0),
+    "maneuverPenalty": ("MANEUVER_PENALTY", int, 2),
+    "distractionPenalty": ("DISTRACTION_PENALTY", int, 5),
+    "safeScoreMin": ("SAFE_SCORE_MIN", int, 90),
+    "mediumScoreMin": ("MEDIUM_SCORE_MIN", int, 75),
+}
+# Значення за замовчуванням; main() замінює їх значеннями з VeloxConfig.swift
+ALPHA = 0.2
+THRESHOLD = 0.4
+COOLDOWN = 3.0
+MANEUVER_PENALTY = 2
+DISTRACTION_PENALTY = 5
+SAFE_SCORE_MIN = 90
+MEDIUM_SCORE_MIN = 75
+
 G_MS2 = 9.80665             # 1 G у м/с^2
-MANEUVER_PENALTY = 2        # штраф Safety Score за маневр (README)
-DISTRACTION_PENALTY = 5     # штраф Safety Score за відволікання (README)
 
 # ---------- Параметри аналізу ----------
-ALPHAS = [0.1, 0.2, 0.3, 0.5]
+BASE_ALPHAS = [0.1, 0.2, 0.3, 0.5]
+ALPHAS = list(BASE_ALPHAS)   # доповнюється значенням ALPHA із конфігурації
 THRESHOLDS = np.round(np.arange(0.20, 0.601, 0.05), 2)
 
 EVENT_STYLE = {
@@ -56,6 +79,44 @@ DISTRACTION_COLOR = "purple"
 # ======================================================================
 # Завантаження та підготовка даних
 # ======================================================================
+
+def find_config(script_dir):
+    """Шукає VeloxConfig.swift поруч зі скриптом і в каталогах на два рівні вгору
+    (структура проєкту: <проєкт>/Analytics/analyzer.py і <проєкт>/<ціль>/VeloxConfig.swift)."""
+    bases = [script_dir, os.path.dirname(script_dir), os.path.dirname(os.path.dirname(script_dir))]
+    for base in bases:
+        for pattern in (CONFIG_FILE, os.path.join("*", CONFIG_FILE), os.path.join("*", "*", CONFIG_FILE)):
+            found = sorted(glob.glob(os.path.join(base, pattern)))
+            if found:
+                return found[0]
+    return None
+
+
+def parse_config(path):
+    """Читає рядки `static let імʼя: Тип = число` з VeloxConfig.swift."""
+    text = open(path, encoding="utf-8").read()
+    values = {}
+    pattern = r"static\s+let\s+(\w+)\s*(?::\s*\w+)?\s*=\s*([-+]?\d+(?:\.\d+)?)\b"
+    for name, number in re.findall(pattern, text):
+        if name in CONFIG_KEYS:
+            values[name] = CONFIG_KEYS[name][1](float(number))
+    return values
+
+
+def apply_config(path):
+    """Заповнює глобальні параметри з VeloxConfig.swift. Повертає опис джерела."""
+    global ALPHAS
+    values = parse_config(path) if path else {}
+    missing = [k for k in CONFIG_KEYS if k not in values]
+    for key, (var, _cast, default) in CONFIG_KEYS.items():
+        globals()[var] = values.get(key, default)
+    ALPHAS = sorted(set(BASE_ALPHAS) | {ALPHA})
+    if not path:
+        return "значення за замовчуванням (VeloxConfig.swift не знайдено)"
+    if missing:
+        print(f"  Увага: у {path} не знайдено {', '.join(missing)}; для них взято значення за замовчуванням")
+    return path
+
 
 def load_trip(path):
     """Читає CSV поїздки. Повертає словник з даними або None, якщо файл не підходить."""
@@ -220,10 +281,12 @@ def apply_filter(x, alpha):
     return out
 
 
-def detect_maneuvers(t, y, threshold, cooldown=COOLDOWN):
+def detect_maneuvers(t, y, threshold, cooldown=None):
     """Повторює логіку detectManeuvers з додатка: окрема пауза для гальмування
     і розгону, щоб один не 'з'їдав' паузу для іншого (виправлено разом із
     впровадженням Safety Score - раніше пауза була спільна)."""
+    if cooldown is None:
+        cooldown = COOLDOWN
     found = []
     last_brake = -np.inf
     last_accel = -np.inf
@@ -237,17 +300,16 @@ def detect_maneuvers(t, y, threshold, cooldown=COOLDOWN):
     return found
 
 
-def safety_score(maneuvers, distractions, maneuver_penalty=MANEUVER_PENALTY,
-                  distraction_penalty=DISTRACTION_PENALTY):
-    """Формула з SensorManager.swift: 100 - 2*маневри - 5*відволікання, clamp на 0."""
-    penalty = maneuver_penalty * maneuvers + distraction_penalty * distractions
+def safety_score(maneuvers, distractions):
+    """Формула застосунку (SafetyScoreCalculator): 100 - штрафи, не менше 0."""
+    penalty = MANEUVER_PENALTY * maneuvers + DISTRACTION_PENALTY * distractions
     return max(0, 100 - penalty)
 
 
 def classify_score(score):
-    if score >= 90:
+    if score >= SAFE_SCORE_MIN:
         return "Безпечний"
-    if score >= 75:
+    if score >= MEDIUM_SCORE_MIN:
         return "Середній"
     return "Небезпечний"
 
@@ -406,8 +468,8 @@ def plot_score_evolution(trip, out_dir):
 
     ax.plot(*_break_gaps(ts, scores), color="tab:blue", linewidth=2.0, drawstyle="steps-post",
             label="Safety Score")
-    ax.axhline(90, color="green", linestyle="--", alpha=0.5, label="90: Безпечний")
-    ax.axhline(75, color="orange", linestyle="--", alpha=0.5, label="75: Середній")
+    ax.axhline(SAFE_SCORE_MIN, color="green", linestyle="--", alpha=0.5, label=f"{SAFE_SCORE_MIN}: Безпечний")
+    ax.axhline(MEDIUM_SCORE_MIN, color="orange", linestyle="--", alpha=0.5, label=f"{MEDIUM_SCORE_MIN}: Середній")
     for w_start, w_end in trip["calibration_windows"]:
         ax.axvspan(w_start, w_end, color="gray", alpha=0.18, label="Калібрування")
 
@@ -583,7 +645,19 @@ def main():
     parser.add_argument("folder", nargs="?", default=os.path.dirname(os.path.abspath(__file__)),
                         help="каталог з CSV (за замовчуванням: каталог скрипта)")
     parser.add_argument("--show", action="store_true", help="показати вікна графіків")
+    parser.add_argument("--config", help="шлях до VeloxConfig.swift (за замовчуванням шукається автоматично)")
     args = parser.parse_args()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = args.config or find_config(script_dir)
+    if args.config and not os.path.isfile(args.config):
+        print(f"Файл конфігурації не знайдено: {args.config}")
+        sys.exit(1)
+    source = apply_config(config_path)
+    print(f"Параметри: {source}")
+    print(f"  alpha = {ALPHA}, поріг = {THRESHOLD} G, пауза = {COOLDOWN} с, "
+          f"штрафи = -{MANEUVER_PENALTY} / -{DISTRACTION_PENALTY}, "
+          f"класи: від {SAFE_SCORE_MIN} / від {MEDIUM_SCORE_MIN}")
 
     if not args.show:
         plt.switch_backend("Agg")

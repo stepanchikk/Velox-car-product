@@ -52,7 +52,8 @@ nonisolated struct ManeuverDetector {
     private var lastBrakingTime: TimeInterval = -.infinity
     private var lastAccelerationTime: TimeInterval = -.infinity
 
-    init(threshold: Double, cooldown: TimeInterval = 3.0) {
+    init(threshold: Double = VeloxConfig.maneuverThreshold,
+         cooldown: TimeInterval = VeloxConfig.maneuverCooldown) {
         self.threshold = threshold
         self.cooldown = cooldown
     }
@@ -86,7 +87,8 @@ nonisolated struct DistractionPolicy {
     let cooldown: TimeInterval
     private var lastDistractionTime: TimeInterval = -.infinity
 
-    init(gracePeriod: TimeInterval = 3.0, cooldown: TimeInterval = 1.5) {
+    init(gracePeriod: TimeInterval = VeloxConfig.distractionGracePeriod,
+         cooldown: TimeInterval = VeloxConfig.distractionCooldown) {
         self.gracePeriod = gracePeriod
         self.cooldown = cooldown
     }
@@ -113,7 +115,8 @@ nonisolated struct OrientationChangeDetector {
     // Останній виміряний кут (пишеться в колонку Tilt_deg)
     private(set) var lastAngle: Double = 0.0
 
-    init(angleThreshold: Double = 30.0, holdTime: TimeInterval = 2.0) {
+    init(angleThreshold: Double = VeloxConfig.recalibrationAngle,
+         holdTime: TimeInterval = VeloxConfig.recalibrationHold) {
         self.angleThreshold = angleThreshold
         self.holdTime = holdTime
     }

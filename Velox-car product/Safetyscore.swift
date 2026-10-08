@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Класифікація підсумкової оцінки Safety Score.
-// Межі відповідають README: 90-100 безпечно, 75-89 середньо, менше 75 небезпечно.
+// Межі задано у VeloxConfig: 90-100 безпечно, 75-89 середньо, менше 75 небезпечно.
 nonisolated enum SafetyClass {
     case safe
     case medium
@@ -9,9 +9,9 @@ nonisolated enum SafetyClass {
 
     static func classify(_ score: Int) -> SafetyClass {
         switch score {
-        case 90...100:
+        case VeloxConfig.safeScoreMin...:
             return .safe
-        case 75..<90:
+        case VeloxConfig.mediumScoreMin..<VeloxConfig.safeScoreMin:
             return .medium
         default:
             return .dangerous
@@ -46,8 +46,8 @@ nonisolated enum SafetyClass {
 // Модель штрафів Safety Score: 100 балів, мінус 2 за кожен маневр і мінус 5
 // за кожне відволікання, не менше 0 (README, пояснювальна записка, п. 1.3.4)
 nonisolated enum SafetyScoreCalculator {
-    static let maneuverPenalty = 2
-    static let distractionPenalty = 5
+    static let maneuverPenalty = VeloxConfig.maneuverPenalty
+    static let distractionPenalty = VeloxConfig.distractionPenalty
 
     static func score(maneuvers: Int, distractions: Int) -> Int {
         max(0, 100 - maneuverPenalty * maneuvers - distractionPenalty * distractions)
