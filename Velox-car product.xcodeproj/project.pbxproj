@@ -8,6 +8,23 @@
 
 /* Begin PBXBuildFile section */
 		FD20040F30548A4200C62B37 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = FD20040E30548A4200C62B37 /* README.md */; };
+		FD85613E307CF8E100DDEAD7 /* filtering.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856136307CF8E100DDEAD7 /* filtering.py */; };
+		FD85613F307CF8E100DDEAD7 /* cli.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856133307CF8E100DDEAD7 /* cli.py */; };
+		FD856140307CF8E100DDEAD7 /* __init__.py in Resources */ = {isa = PBXBuildFile; fileRef = FD85612B307CF8E100DDEAD7 /* __init__.py */; };
+		FD856141307CF8E100DDEAD7 /* summary.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856139307CF8E100DDEAD7 /* summary.py */; };
+		FD856142307CF8E100DDEAD7 /* events.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856135307CF8E100DDEAD7 /* events.py */; };
+		FD856143307CF8E100DDEAD7 /* test_core.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856129307CF8E100DDEAD7 /* test_core.py */; };
+		FD856144307CF8E100DDEAD7 /* overview.py in Resources */ = {isa = PBXBuildFile; fileRef = FD85612D307CF8E100DDEAD7 /* overview.py */; };
+		FD856145307CF8E100DDEAD7 /* config.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856134307CF8E100DDEAD7 /* config.py */; };
+		FD856146307CF8E100DDEAD7 /* common.py in Resources */ = {isa = PBXBuildFile; fileRef = FD85612C307CF8E100DDEAD7 /* common.py */; };
+		FD856147307CF8E100DDEAD7 /* loader.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856137307CF8E100DDEAD7 /* loader.py */; };
+		FD856148307CF8E100DDEAD7 /* trip.py in Resources */ = {isa = PBXBuildFile; fileRef = FD85613A307CF8E100DDEAD7 /* trip.py */; };
+		FD856149307CF8E100DDEAD7 /* trip_plots.py in Resources */ = {isa = PBXBuildFile; fileRef = FD85612E307CF8E100DDEAD7 /* trip_plots.py */; };
+		FD85614A307CF8E100DDEAD7 /* scoring.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856138307CF8E100DDEAD7 /* scoring.py */; };
+		FD85614B307CF8E100DDEAD7 /* __init__.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856130307CF8E100DDEAD7 /* __init__.py */; };
+		FD85614C307CF8E100DDEAD7 /* checks.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856132307CF8E100DDEAD7 /* checks.py */; };
+		FD85614D307CF8E100DDEAD7 /* analyzer.py in Resources */ = {isa = PBXBuildFile; fileRef = FD85613C307CF8E100DDEAD7 /* analyzer.py */; };
+		FD85614E307CF8E100DDEAD7 /* __main__.py in Resources */ = {isa = PBXBuildFile; fileRef = FD856131307CF8E100DDEAD7 /* __main__.py */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -22,18 +39,24 @@
 
 /* Begin PBXFileReference section */
 		FD20040E30548A4200C62B37 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
-		FD6EB087305D22E200F1B110 /* analyzer.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = analyzer.py; sourceTree = "<group>"; };
 		FD7E27E1307700F900304D46 /* Velox-car productTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Velox-car productTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		FD810F2B306B007F005AAC22 /* distribution.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = distribution.png; sourceTree = "<group>"; };
-		FD810F2C306B007F005AAC22 /* summary.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = summary.csv; sourceTree = "<group>"; };
-		FD810F2D306B007F005AAC22 /* threshold_sensitivity.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = threshold_sensitivity.png; sourceTree = "<group>"; };
-		FD810F2E306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-44_alpha_comparison.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Velox_Data_2026-09-25_13-18-44_alpha_comparison.png"; sourceTree = "<group>"; };
-		FD810F2F306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-44_raw_vs_filtered.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Velox_Data_2026-09-25_13-18-44_raw_vs_filtered.png"; sourceTree = "<group>"; };
-		FD810F30306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-58_alpha_comparison.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Velox_Data_2026-09-25_13-18-58_alpha_comparison.png"; sourceTree = "<group>"; };
-		FD810F31306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-58_raw_vs_filtered.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Velox_Data_2026-09-25_13-18-58_raw_vs_filtered.png"; sourceTree = "<group>"; };
-		FD8CB2143060921700E2CC80 /* Velox_Filtered_2026-09-19_22-38-25.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-19_22-38-25.csv"; sourceTree = "<group>"; };
-		FD8CB2153060921700E2CC80 /* Velox_Filtered_2026-09-20_13-22-41.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-20_13-22-41.csv"; sourceTree = "<group>"; };
-		FD8CB2163060921700E2CC80 /* Velox_Filtered_2026-09-20_13-32-06.csv */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Velox_Filtered_2026-09-20_13-32-06.csv"; sourceTree = "<group>"; };
+		FD856129307CF8E100DDEAD7 /* test_core.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = test_core.py; sourceTree = "<group>"; };
+		FD85612B307CF8E100DDEAD7 /* __init__.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = __init__.py; sourceTree = "<group>"; };
+		FD85612C307CF8E100DDEAD7 /* common.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = common.py; sourceTree = "<group>"; };
+		FD85612D307CF8E100DDEAD7 /* overview.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = overview.py; sourceTree = "<group>"; };
+		FD85612E307CF8E100DDEAD7 /* trip_plots.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = trip_plots.py; sourceTree = "<group>"; };
+		FD856130307CF8E100DDEAD7 /* __init__.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = __init__.py; sourceTree = "<group>"; };
+		FD856131307CF8E100DDEAD7 /* __main__.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = __main__.py; sourceTree = "<group>"; };
+		FD856132307CF8E100DDEAD7 /* checks.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = checks.py; sourceTree = "<group>"; };
+		FD856133307CF8E100DDEAD7 /* cli.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = cli.py; sourceTree = "<group>"; };
+		FD856134307CF8E100DDEAD7 /* config.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = config.py; sourceTree = "<group>"; };
+		FD856135307CF8E100DDEAD7 /* events.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = events.py; sourceTree = "<group>"; };
+		FD856136307CF8E100DDEAD7 /* filtering.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = filtering.py; sourceTree = "<group>"; };
+		FD856137307CF8E100DDEAD7 /* loader.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = loader.py; sourceTree = "<group>"; };
+		FD856138307CF8E100DDEAD7 /* scoring.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = scoring.py; sourceTree = "<group>"; };
+		FD856139307CF8E100DDEAD7 /* summary.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = summary.py; sourceTree = "<group>"; };
+		FD85613A307CF8E100DDEAD7 /* trip.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = trip.py; sourceTree = "<group>"; };
+		FD85613C307CF8E100DDEAD7 /* analyzer.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = analyzer.py; sourceTree = "<group>"; };
 		FD9DAC80305349500025AF32 /* Velox-car product.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Velox-car product.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -68,39 +91,61 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		FD6EB089305D22E200F1B110 /* Analytics */ = {
+		FD85612A307CF8E100DDEAD7 /* tests */ = {
 			isa = PBXGroup;
 			children = (
-				FD6EB087305D22E200F1B110 /* analyzer.py */,
-				FD8CB2143060921700E2CC80 /* Velox_Filtered_2026-09-19_22-38-25.csv */,
-				FD8CB2153060921700E2CC80 /* Velox_Filtered_2026-09-20_13-22-41.csv */,
-				FD8CB2163060921700E2CC80 /* Velox_Filtered_2026-09-20_13-32-06.csv */,
-				FD810F32306B007F005AAC22 /* figures */,
+				FD856129307CF8E100DDEAD7 /* test_core.py */,
 			);
-			path = Analytics;
+			path = tests;
 			sourceTree = "<group>";
 		};
-		FD810F32306B007F005AAC22 /* figures */ = {
+		FD85612F307CF8E100DDEAD7 /* plots */ = {
 			isa = PBXGroup;
 			children = (
-				FD810F2B306B007F005AAC22 /* distribution.png */,
-				FD810F2C306B007F005AAC22 /* summary.csv */,
-				FD810F2D306B007F005AAC22 /* threshold_sensitivity.png */,
-				FD810F2E306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-44_alpha_comparison.png */,
-				FD810F2F306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-44_raw_vs_filtered.png */,
-				FD810F30306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-58_alpha_comparison.png */,
-				FD810F31306B007F005AAC22 /* Velox_Data_2026-09-25_13-18-58_raw_vs_filtered.png */,
+				FD85612B307CF8E100DDEAD7 /* __init__.py */,
+				FD85612C307CF8E100DDEAD7 /* common.py */,
+				FD85612D307CF8E100DDEAD7 /* overview.py */,
+				FD85612E307CF8E100DDEAD7 /* trip_plots.py */,
 			);
-			path = figures;
+			path = plots;
+			sourceTree = "<group>";
+		};
+		FD85613B307CF8E100DDEAD7 /* velox_analytics */ = {
+			isa = PBXGroup;
+			children = (
+				FD85612F307CF8E100DDEAD7 /* plots */,
+				FD856130307CF8E100DDEAD7 /* __init__.py */,
+				FD856131307CF8E100DDEAD7 /* __main__.py */,
+				FD856132307CF8E100DDEAD7 /* checks.py */,
+				FD856133307CF8E100DDEAD7 /* cli.py */,
+				FD856134307CF8E100DDEAD7 /* config.py */,
+				FD856135307CF8E100DDEAD7 /* events.py */,
+				FD856136307CF8E100DDEAD7 /* filtering.py */,
+				FD856137307CF8E100DDEAD7 /* loader.py */,
+				FD856138307CF8E100DDEAD7 /* scoring.py */,
+				FD856139307CF8E100DDEAD7 /* summary.py */,
+				FD85613A307CF8E100DDEAD7 /* trip.py */,
+			);
+			path = velox_analytics;
+			sourceTree = "<group>";
+		};
+		FD85613D307CF8E100DDEAD7 /* Analytics */ = {
+			isa = PBXGroup;
+			children = (
+				FD85612A307CF8E100DDEAD7 /* tests */,
+				FD85613B307CF8E100DDEAD7 /* velox_analytics */,
+				FD85613C307CF8E100DDEAD7 /* analyzer.py */,
+			);
+			path = Analytics;
 			sourceTree = "<group>";
 		};
 		FD9DAC77305349500025AF32 = {
 			isa = PBXGroup;
 			children = (
-				FD6EB089305D22E200F1B110 /* Analytics */,
 				FD20040E30548A4200C62B37 /* README.md */,
 				FD9DAC82305349500025AF32 /* Velox-car product */,
 				FD7E27E2307700F900304D46 /* Velox-car productTests */,
+				FD85613D307CF8E100DDEAD7 /* Analytics */,
 				FD9DAC81305349500025AF32 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -213,6 +258,23 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FD85613E307CF8E100DDEAD7 /* filtering.py in Resources */,
+				FD85613F307CF8E100DDEAD7 /* cli.py in Resources */,
+				FD856140307CF8E100DDEAD7 /* __init__.py in Resources */,
+				FD856141307CF8E100DDEAD7 /* summary.py in Resources */,
+				FD856142307CF8E100DDEAD7 /* events.py in Resources */,
+				FD856143307CF8E100DDEAD7 /* test_core.py in Resources */,
+				FD856144307CF8E100DDEAD7 /* overview.py in Resources */,
+				FD856145307CF8E100DDEAD7 /* config.py in Resources */,
+				FD856146307CF8E100DDEAD7 /* common.py in Resources */,
+				FD856147307CF8E100DDEAD7 /* loader.py in Resources */,
+				FD856148307CF8E100DDEAD7 /* trip.py in Resources */,
+				FD856149307CF8E100DDEAD7 /* trip_plots.py in Resources */,
+				FD85614A307CF8E100DDEAD7 /* scoring.py in Resources */,
+				FD85614B307CF8E100DDEAD7 /* __init__.py in Resources */,
+				FD85614C307CF8E100DDEAD7 /* checks.py in Resources */,
+				FD85614D307CF8E100DDEAD7 /* analyzer.py in Resources */,
+				FD85614E307CF8E100DDEAD7 /* __main__.py in Resources */,
 				FD20040F30548A4200C62B37 /* README.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
