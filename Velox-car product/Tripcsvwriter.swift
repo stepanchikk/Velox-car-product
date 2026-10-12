@@ -112,6 +112,7 @@ nonisolated struct TripMetadata: Hashable, Sendable {
             ("maneuverCooldown", VeloxConfig.maneuverCooldown),
             ("distractionGracePeriod", VeloxConfig.distractionGracePeriod),
             ("distractionCooldown", VeloxConfig.distractionCooldown),
+            ("callFocusLossGrace", VeloxConfig.callFocusLossGrace),
             ("distractionDurationStep", VeloxConfig.distractionDurationStep),
             ("distractionDurationPenalty", Double(VeloxConfig.distractionDurationPenalty)),
             ("distractionDurationPenaltyMax", Double(VeloxConfig.distractionDurationPenaltyMax)),

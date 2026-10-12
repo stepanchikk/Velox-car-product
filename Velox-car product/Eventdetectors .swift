@@ -213,6 +213,16 @@ nonisolated enum CallPolicy {
             return handheld || callWasActive ? .distraction : .handsFreeCall
         }
     }
+
+    /// Чи йшла розмова ще до втрати активності (аргумент callWasActive для cause).
+    /// Розмова, що почалась менше ніж за grace секунд до цього, не рахується:
+    /// її екран відкрила система. Так у польовій поїздці дзвінок через CarPlay
+    /// почався за 0.2 с до втрати активності і помилково отримав штраф.
+    static func callWasActive(callStartedAt: TimeInterval?, focusLostAt: TimeInterval,
+                              grace: TimeInterval = VeloxConfig.callFocusLossGrace) -> Bool {
+        guard let start = callStartedAt else { return false }
+        return focusLostAt - start >= grace
+    }
 }
 
 // MARK: - Зміна положення телефона

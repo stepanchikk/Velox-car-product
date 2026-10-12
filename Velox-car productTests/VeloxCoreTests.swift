@@ -163,6 +163,23 @@ final class DistractionTrackerTests: XCTestCase {
         // Розмова вже йшла, а водій відкрив інший застосунок
         XCTAssertEqual(CallPolicy.cause(for: .active(handheld: false), callWasActive: true), .distraction)
     }
+
+    func testCallWasActiveGrace() {
+        XCTAssertFalse(CallPolicy.callWasActive(callStartedAt: nil, focusLostAt: 10))
+        XCTAssertFalse(CallPolicy.callWasActive(callStartedAt: 9.5, focusLostAt: 10, grace: 2))
+        XCTAssertTrue(CallPolicy.callWasActive(callStartedAt: 8, focusLostAt: 10, grace: 2))
+        XCTAssertTrue(CallPolicy.callWasActive(callStartedAt: 5, focusLostAt: 30, grace: 2))
+    }
+
+    // Польова поїздка 12.10.2026: дзвінок через CarPlay зʼєднався на 38.98 с,
+    // а iOS забрала активність на 39.18 с. Це не відволікання.
+    func testCarPlayCallIsNotDistraction() {
+        let wasActive = CallPolicy.callWasActive(callStartedAt: 38.98, focusLostAt: 39.18)
+        XCTAssertEqual(CallPolicy.cause(for: .active(handheld: false), callWasActive: wasActive), .handsFreeCall)
+        // А якщо водій вийшов із застосунку через 30 с розмови - штраф
+        let later = CallPolicy.callWasActive(callStartedAt: 38.98, focusLostAt: 69.0)
+        XCTAssertEqual(CallPolicy.cause(for: .active(handheld: false), callWasActive: later), .distraction)
+    }
 }
 
 // MARK: - Зміна положення телефона

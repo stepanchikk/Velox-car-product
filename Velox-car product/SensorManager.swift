@@ -144,6 +144,9 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     private var pendingFocusLoss: (time: TimeInterval, callWasActive: Bool)?
     // Дзвінок триває (записано CallIncoming або CallStart, ще немає CallEnd)
     private var callInProgress = false
+    // Коли почався дзвінок (секунди сесії), щоб відрізнити екран розмови,
+    // відкритий системою, від виходу водія із застосунку під час розмови
+    private var callStartedAt: TimeInterval?
     // Відволікання почалось через розмову з телефоном біля вуха
     private var handheldCallEpisode = false
 
@@ -322,7 +325,9 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         // Екран вхідного дзвінка відкривається трохи раніше, ніж CallKit повідомляє
         // про дзвінок, тому причину визначаємо з невеликою затримкою, а час
         // відволікання беремо з моменту втрати активності
-        pendingFocusLoss = (sessionTime(), callInProgress)
+        let now = sessionTime()
+        pendingFocusLoss = (now, CallPolicy.callWasActive(callStartedAt: callInProgress ? callStartedAt : nil,
+                                                         focusLostAt: now))
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.resolvePendingFocusLoss()
         }
@@ -340,6 +345,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
             // Дзвінок відкрито: CallEnd запишеться, коли дзвінків не залишиться
             // (навіть якщо iOS призупинила застосунок на час розмови)
             callInProgress = true
+            callStartedAt = pending.time
             phoneState = .onCall
         case .handsFreeCall:
             updateCallState()
@@ -431,6 +437,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     private func updateCallState() {
         guard isRecording else {
             callInProgress = false
+            callStartedAt = nil
             return
         }
         let now = sessionTime()
@@ -438,6 +445,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         case .none, .incomingRinging:
             guard callInProgress else { return }
             callInProgress = false
+            callStartedAt = nil
             if handheldCallEpisode {
                 endDistraction(at: now)
             }
@@ -448,6 +456,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         case .active(let handheld):
             if !callInProgress {
                 callInProgress = true
+                callStartedAt = now
                 appendEventRow(event: handheld ? "CallStart_Handheld" : "CallStart", time: now)
                 if phoneState != .distracted, !isCalibrating {
                     phoneState = .onCall
@@ -557,6 +566,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         retryCalibrationAt = nil
         pendingFocusLoss = nil
         callInProgress = false
+        callStartedAt = nil
         lastRawLongitudinal = 0.0
         lastUserAcceleration = Vector3.zero
         lastRotationRate = Vector3.zero
@@ -591,6 +601,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         if callInProgress {
             appendRow(event: "CallEnd", time: stopTime, isSample: false, stopOnError: false)
             callInProgress = false
+            callStartedAt = nil
         }
         retryCalibrationAt = nil
         isRecording = false

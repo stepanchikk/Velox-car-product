@@ -38,6 +38,11 @@ nonisolated enum VeloxConfig {
     static let distractionDurationStep: TimeInterval = 10.0
     static let distractionDurationPenalty: Int = 1
     static let distractionDurationPenaltyMax: Int = 5
+    // Розмова, що почалась менше ніж за стільки секунд до втрати активності, - причина
+    // цієї втрати: дзвінок прийнято через CarPlay чи гарнітуру, і екран розмови
+    // відкрила система, а не водій. Пізніший вихід із застосунку під час розмови -
+    // відволікання.
+    static let callFocusLossGrace: TimeInterval = 2.0
 
     // MARK: Safety Score
 
