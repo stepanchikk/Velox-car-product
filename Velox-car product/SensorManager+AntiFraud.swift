@@ -48,7 +48,12 @@ extension SensorManager {
         case .handsFreeCall:
             updateCallState()
         case .distraction:
-            beginDistraction(at: pending.time)
+            if backgroundRecording {
+                // Може бути блокування екрана: рішення за ScreenLockTracker
+                applyScreenActions(screenTracker.focusLost(at: pending.time))
+            } else {
+                beginDistraction(at: pending.time)
+            }
         }
     }
 
@@ -95,6 +100,12 @@ extension SensorManager {
     private func handleFocusGained() {
         guard isRecording else { return }
         resolvePendingFocusLoss()
+        if backgroundRecording {
+            applyScreenActions(screenTracker.focusGained(at: sessionTime()))
+            if phoneState == .screenOff {
+                phoneState = callInProgress ? .onCall : .recording
+            }
+        }
         // Відволікання через розмову біля вуха закінчується разом із розмовою
         if !handheldCallEpisode {
             endDistraction(at: sessionTime())
@@ -106,6 +117,52 @@ extension SensorManager {
                 self.phoneState = .calibrating
             } else {
                 self.phoneState = self.callInProgress ? .onCall : .recording
+            }
+        }
+    }
+
+    // MARK: - Запис із вимкненим екраном
+
+    @objc func deviceLocked() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.isRecording, self.backgroundRecording else { return }
+            self.applyScreenActions(self.screenTracker.deviceLocked(at: self.sessionTime()))
+        }
+    }
+
+    @objc func deviceUnlocked() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.isRecording, self.backgroundRecording else { return }
+            self.applyScreenActions(self.screenTracker.deviceUnlocked(at: self.sessionTime()))
+        }
+    }
+
+    /// Відкладені рішення ScreenLockTracker; викликається з кожним виміром
+    func checkScreenState(time: TimeInterval) {
+        guard backgroundRecording else { return }
+        applyScreenActions(screenTracker.tick(at: time))
+    }
+
+    private func applyScreenActions(_ actions: [ScreenAction]) {
+        for action in actions {
+            switch action {
+            case .screenLocked(let time):
+                appendEventRow(event: "ScreenLocked", time: time)
+                if !distractionTracker.isActive, !callInProgress {
+                    phoneState = .screenOff
+                }
+            case .screenUnlocked(let time):
+                appendEventRow(event: "ScreenUnlocked", time: time)
+            case .beginDistraction(let time):
+                // Під час першого калібрування штрафів немає (див. distractionsPaused)
+                if !distractionsPaused {
+                    beginDistraction(at: time)
+                }
+            case .endDistraction(let time):
+                endDistraction(at: time)
+                if screenTracker.isLocked, !callInProgress {
+                    phoneState = .screenOff
+                }
             }
         }
     }

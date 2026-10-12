@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from .events import EVENT_LABELS, count_calls, distractions_at_call_start
+from .events import EVENT_LABELS, count_calls, distractions_at_call_start, screen_off_intervals
 from .scoring import classify_score, trips_word
 from .summary import NA, trip_row
 
@@ -110,6 +110,17 @@ def trip_checks(trip, row):
             checks.append(Check("warn", "Напрям за поворотами розходиться з GPS",
                                 detail + " Без GPS застосунок виправив би напрям."))
 
+    background = trip.metadata.get("background")
+    locked = screen_off_intervals(trip.events, trip.t[-1])
+    if background == "on" or locked:
+        seconds = sum(end - start for start, end in locked)
+        checks.append(Check("info", "Запис із вимкненим екраном дозволено",
+                            f"Екран блокували {len(locked)} {_times_word(len(locked))}, разом {seconds:.0f} с; за цей час штраф був "
+                            f"лише за користування телефоном (розблокування не для Velox)."))
+    elif background == "off":
+        checks.append(Check("info", "Запис лише з увімкненим екраном",
+                            "Фоновий режим був вимкнений або недоступний: блокування екрана вважалось відволіканням."))
+
     grace = trip.params.call_focus_loss_grace
     for ts, delay in distractions_at_call_start(trip.events, grace):
         checks.append(Check("warn", "Відволікання на початку розмови без рук",
@@ -125,6 +136,13 @@ def trip_checks(trip, row):
         checks.append(Check("info", "У файлі немає параметрів запису",
                             "Стара версія застосунку: використано поточні параметри."))
     return checks
+
+
+def _times_word(n):
+    """1 раз, 2 рази, 5 разів."""
+    if 11 <= n % 100 <= 14:
+        return "разів"
+    return {1: "раз", 2: "рази", 3: "рази", 4: "рази"}.get(n % 10, "разів")
 
 
 def trip_started(trip):
@@ -253,6 +271,7 @@ def trip_page(trip, config, out_dir):
         ("Відволікань", row["Відволікань (лог)"]),
         ("Телефон у руках", f"{seconds} с" if seconds != NA else NA),
         ("Дзвінків", count_calls(trip.events["Event"])),
+        ("З вимкненим екраном", f"{row['Екран вимкнено, с']} с" if row["Екран вимкнено, с"] != NA else NA),
         ("Макс. розгін", f"{row['Макс. розгін, G']} G"),
         ("Макс. гальмування", f"{row['Макс. гальмування, G']} G"),
         ("Вимірів", row["Вимірів"]),

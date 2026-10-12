@@ -30,6 +30,8 @@ extension SensorManager {
         let gravity = vector(motion.gravity)
         let userAcceleration = vector(motion.userAcceleration)
         let time = sessionTime(of: motion)
+        // Запис із вимкненим екраном: відкладені рішення про блокування і розблокування
+        checkScreenState(time: time)
 
         if isCalibrating {
             let outcome = calibrator.feedMotion(gravity: gravity,
@@ -107,6 +109,9 @@ extension SensorManager {
                                coordinate: freshCoordinate)
         if let error = csvWriter.append(row, isSample: isSample), stopOnError {
             stopRecording(reason: error)
+            return
         }
+        // Контролер сам відкидає однакові і надто часті оновлення
+        liveActivity.update(liveActivityState())
     }
 }

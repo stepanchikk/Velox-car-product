@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from .config import THRESHOLDS
-from .events import count_calls, distraction_episodes, episode_seconds
+from .events import count_calls, distraction_episodes, episode_seconds, screen_off_intervals
 from .filtering import count_maneuvers, detect_maneuvers
 from .scoring import classify_score, duration_penalty, safety_score
 
@@ -53,6 +53,8 @@ def trip_row(trip):
         "Телефон у руках, с": round(sum(seconds), 1) if has_durations else NA,
         "Штраф за тривалість": extra if has_durations else NA,
         "Дзвінків": count_calls(ev),
+        "Екран вимкнено, с": (round(sum(e - b for b, e in screen_off_intervals(trip.events, t[-1])), 1)
+                              if "background" in trip.metadata or ev.eq("ScreenLocked").any() else NA),
         "Гальмувань (перерахунок)": sim_brake,
         "Розгонів (перерахунок)": sim_accel,
         "Час вище порога, %": round(100.0 * float(np.mean(np.abs(y) > p.threshold)), 2),

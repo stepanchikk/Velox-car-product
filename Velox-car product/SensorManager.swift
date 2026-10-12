@@ -14,6 +14,7 @@ enum SessionState: Equatable {
     case recording
     case distracted
     case onCall
+    case screenOff      // запис іде у фоні з вимкненим екраном
 
     var title: String {
         switch self {
@@ -22,6 +23,28 @@ enum SessionState: Equatable {
         case .recording: return "Запис іде"
         case .distracted: return "Відволікання!"
         case .onCall: return "Дзвінок"
+        case .screenOff: return "Екран вимкнено"
+        }
+    }
+}
+
+// Чи можна вести запис із вимкненим екраном і чому ні
+enum BackgroundRecordingAvailability: Equatable {
+    case available
+    case noBackgroundMode   // у проєкті не ввімкнено Background Modes → Location updates
+    case noPasscode         // без код-пароля iOS не повідомляє про блокування
+    case noLocation         // фоновий режим тримається на геолокації
+
+    var hint: String {
+        switch self {
+        case .available:
+            return "Екран можна блокувати: запис триває, а штраф буде лише за користування телефоном."
+        case .noBackgroundMode:
+            return "Недоступно: у проєкті Xcode не ввімкнено Background Modes → Location updates."
+        case .noPasscode:
+            return "Недоступно: на телефоні немає код-пароля, тому iOS не повідомляє, коли екран заблоковано."
+        case .noLocation:
+            return "Недоступно без точної геолокації: саме вона дозволяє записувати у фоні."
         }
     }
 }
@@ -163,6 +186,14 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     // Відволікання почалось через розмову з телефоном біля вуха
     var handheldCallEpisode = false
 
+    // Запис із вимкненим екраном: вмикається на старті поїздки, якщо дозволено
+    // налаштуванням і можливо на цьому телефоні (див. backgroundRecordingAvailability)
+    var backgroundRecording = false
+    // Відрізняє блокування екрана від користування телефоном (EventDetectors.swift)
+    var screenTracker = ScreenLockTracker()
+    // Оцінка і лічильники на заблокованому екрані та в Dynamic Island
+    let liveActivity = LiveActivityController()
+
     // Калібрування в цій поїздці вже вдавалось: далі йдуть перекалібрування в русі
     var hasCalibrated = false
     // Без GPS напрям руху перевіряється за поворотами (див. checkYawEstimate)
@@ -212,6 +243,10 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         // Застосунок пішов у фон: iOS може його вивантажити, тому скидаємо буфер у файл
         NotificationCenter.default.addObserver(self, selector: #selector(appEnteredBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
 
+        // Блокування і розблокування телефона (лише з код-паролем): запис із вимкненим екраном
+        NotificationCenter.default.addObserver(self, selector: #selector(deviceLocked), name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(deviceUnlocked), name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
+
         // Дзвінки і зміна аудіовиходу (динамік біля вуха, гучний звʼязок, Bluetooth, CarPlay)
         callObserver.setDelegate(self, queue: DispatchQueue.main)
         // Це сповіщення надходить у фоновому потоці, тому обробник ставиться
@@ -223,6 +258,9 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
                 self?.updateCallState()
             }
         }
+
+        // Live Activity, що лишилась після аварійного завершення попереднього запуску
+        LiveActivityController.endStale()
 
         locationManager.delegate = self
         locationManager.activityType = .automotiveNavigation
@@ -246,6 +284,20 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = false
         }
+    }
+
+    // MARK: - Live Activity
+
+    /// Те, що показують заблокований екран і Dynamic Island
+    func liveActivityState(status: String? = nil) -> VeloxTripAttributes.ContentState {
+        VeloxTripAttributes.ContentState(
+            score: safetyScore,
+            level: SafetyClass.classify(safetyScore).liveActivityLevel,
+            maneuvers: hardBrakingCount + hardAccelerationCount,
+            distractions: distractionCount,
+            speedKmh: currentSpeedKmh.map { Int($0.rounded()) },
+            status: status ?? phoneState.title,
+            isDistracted: phoneState == .distracted)
     }
 
     // MARK: - Час сесії

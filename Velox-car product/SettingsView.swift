@@ -13,6 +13,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.saveRouteKey) private var saveRoute = false
     @AppStorage(AppSettings.showLiveMapKey) private var showLiveMap = true
     @AppStorage(AppSettings.showTrafficKey) private var showTraffic = true
+    @AppStorage(AppSettings.backgroundRecordingKey) private var backgroundRecording = true
+    @AppStorage(AppSettings.liveActivityKey) private var liveActivity = true
 
     @State private var confirmDeleteTrips = false
     @State private var confirmDeleteProfile = false
@@ -41,6 +43,17 @@ struct SettingsView: View {
                 SectionTitle("Поїздка")
             } footer: {
                 Text("Вібрація підказує про різкий маневр чи відволікання, не відриваючи погляду від дороги. Карта стежить за авто сама і показує пройдений шлях і події лише під час поїздки, нічого не зберігаючи.")
+            }
+
+            Section {
+                Toggle("Запис із вимкненим екраном", isOn: $backgroundRecording)
+                    .disabled(sensorManager.isRecording)
+                Toggle("Оцінка на заблокованому екрані", isOn: $liveActivity)
+                    .disabled(sensorManager.isRecording)
+            } header: {
+                SectionTitle("Фоновий режим")
+            } footer: {
+                Text(backgroundFooter)
             }
 
             Section {
@@ -109,6 +122,18 @@ struct SettingsView: View {
         } message: {
             Text("Буде видалено імʼя, фото і дані входу. Поїздки залишаться на телефоні.")
         }
+    }
+
+    // Чому фоновий запис недоступний, або як він працює; змінити можна між поїздками
+    private var backgroundFooter: String {
+        let availability = sensorManager.backgroundRecordingAvailability
+        guard backgroundRecording else {
+            return "Вимкнено: під час поїздки екран має лишатися ввімкненим, блокування вважається відволіканням."
+        }
+        let liveNote = liveActivity
+            ? " Оцінка, лічильники і швидкість видно на заблокованому екрані та в Dynamic Island."
+            : ""
+        return availability.hint + (availability == .available ? liveNote : "")
     }
 
     private var tripsSize: Int64 {

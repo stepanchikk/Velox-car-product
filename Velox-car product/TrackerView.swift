@@ -8,6 +8,7 @@ struct TrackerView: View {
     @AppStorage(AppSettings.showLiveAccelerationKey) private var showLiveAcceleration = true
     @AppStorage(AppSettings.showLiveMapKey) private var showLiveMap = true
     @AppStorage(AppSettings.showTrafficKey) private var showTraffic = true
+    @AppStorage(AppSettings.backgroundRecordingKey) private var backgroundRecording = true
 
     var body: some View {
         ScrollView {
@@ -96,6 +97,11 @@ struct TrackerView: View {
             Label(sensorManager.locationStatus.hint, systemImage: locationIcon(for: sensorManager.locationStatus))
                 .font(.footnote)
                 .foregroundStyle(sensorManager.locationStatus == .authorized ? VeloxColor.safe : .secondary)
+            if backgroundRecording, sensorManager.backgroundRecordingAvailability == .available {
+                Label("Екран можна блокувати: запис триває", systemImage: "lock.iphone")
+                    .font(.footnote)
+                    .foregroundStyle(VeloxColor.safe)
+            }
         }
         .veloxPanel(radius: 18, padding: 16)
     }
@@ -219,6 +225,7 @@ struct TrackerView: View {
         case .recording: return VeloxColor.safe
         case .distracted: return VeloxColor.danger
         case .onCall: return VeloxColor.accent
+        case .screenOff: return VeloxColor.safe
         }
     }
 }

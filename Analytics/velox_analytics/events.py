@@ -2,7 +2,7 @@
 
 # Службові рядки нових версій: повторюють останні значення, вимірами не є
 SERVICE_EVENTS = ("DistractionEnd", "DistractionResume", "CallIncoming", "CallStart",
-                  "CallStart_Handheld", "CallEnd")
+                  "CallStart_Handheld", "CallEnd", "ScreenLocked", "ScreenUnlocked")
 CALL_START_EVENTS = ("CallIncoming", "CallStart", "CallStart_Handheld")
 
 # Зрозумілі назви подій для звіту
@@ -25,6 +25,8 @@ EVENT_LABELS = {
     "CallStart": "Розмова без рук (гучний звʼязок, гарнітура, CarPlay)",
     "CallStart_Handheld": "Розмова з телефоном біля вуха",
     "CallEnd": "Дзвінок завершено",
+    "ScreenLocked": "Екран заблоковано: запис триває у фоні",
+    "ScreenUnlocked": "Екран розблоковано",
 }
 
 
@@ -83,6 +85,21 @@ def distractions_at_call_start(events, grace):
         elif ev == "Distraction" and call_started is not None and float(ts) - call_started < grace:
             found.append((float(ts), float(ts) - call_started))
     return found
+
+
+def screen_off_intervals(events, end_time):
+    """Проміжки запису з заблокованим екраном: від ScreenLocked до ScreenUnlocked.
+    Якщо запис зупинився із заблокованим екраном, проміжок триває до end_time."""
+    intervals, locked_at = [], None
+    for ts, ev in zip(events["Timestamp"], events["Event"]):
+        if ev == "ScreenLocked" and locked_at is None:
+            locked_at = float(ts)
+        elif ev == "ScreenUnlocked" and locked_at is not None:
+            intervals.append((locked_at, float(ts)))
+            locked_at = None
+    if locked_at is not None:
+        intervals.append((locked_at, float(end_time)))
+    return intervals
 
 
 def count_calls(events):

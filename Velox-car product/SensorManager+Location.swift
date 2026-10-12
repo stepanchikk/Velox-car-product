@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import LocalAuthentication
 
 // Геолокація: доступ, оновлення позиції і швидкості, енергоспоживання GPS
 extension SensorManager {
@@ -83,5 +84,37 @@ extension SensorManager {
     var freshCoordinate: RoutePoint? {
         guard recordRoute, sessionTime() - lastCoordinateTime <= Self.speedMaxAge else { return nil }
         return lastCoordinate
+    }
+
+    // MARK: - Запис у фоні
+
+    /// iOS дозволяє застосунку працювати у фоні, поки він отримує геолокацію
+    /// (так працюють навігатори). Для цього в проєкті потрібна можливість
+    /// Background Modes → Location updates, на телефоні - код-пароль (без нього
+    /// не приходять сповіщення про блокування) і точна геолокація.
+    var backgroundRecordingAvailability: BackgroundRecordingAvailability {
+        guard Self.hasLocationBackgroundMode else { return .noBackgroundMode }
+        guard locationAuthorized else { return .noLocation }
+        guard Self.deviceHasPasscode else { return .noPasscode }
+        return .available
+    }
+
+    static var hasLocationBackgroundMode: Bool {
+        let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String]
+        return modes?.contains("location") ?? false
+    }
+
+    static var deviceHasPasscode: Bool {
+        // .deviceOwnerAuthentication можливе з будь-яким захистом: код, Face ID чи Touch ID
+        LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
+    }
+
+    func setBackgroundLocation(enabled: Bool) {
+        // Без Background Modes → Location updates iOS аварійно завершує застосунок
+        // на цьому рядку, тому спершу перевіряємо налаштування проєкту
+        guard Self.hasLocationBackgroundMode else { return }
+        locationManager.allowsBackgroundLocationUpdates = enabled
+        // Синя позначка в рядку стану: водій бачить, що запис триває
+        locationManager.showsBackgroundLocationIndicator = enabled
     }
 }

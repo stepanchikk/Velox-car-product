@@ -57,6 +57,13 @@ def load_trip(path, config):
     # Службові рядки (події між вимірами) не є вимірами: без них сирий сигнал
     # відновлюється коректно, а графіки не мають зайвих точок
     is_extra = _extra_rows(df)
+    # Рішення про відволікання і блокування екрана застосунок приймає із затримкою
+    # (до screenLockWaitTime), тому такі рядки можуть стояти після вимірів з пізнішим
+    # часом. Службові рядки визначено за порядком запису, далі все впорядковується
+    # за часом (стабільно: рядки з однаковим часом лишаються в порядку запису).
+    order = np.argsort(df["Timestamp"].to_numpy(), kind="stable")
+    df = df.iloc[order].reset_index(drop=True)
+    is_extra = is_extra.iloc[order].reset_index(drop=True)
     motion = df[~is_extra].reset_index(drop=True)
     t = motion["Timestamp"].to_numpy(dtype=float)
     y = motion["Filtered_Y"].to_numpy(dtype=float)

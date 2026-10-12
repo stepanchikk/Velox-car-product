@@ -67,6 +67,9 @@ extension SensorManager {
 
         let now = Date()
         recordRoute = AppSettings.saveRouteEnabled && locationAuthorized
+        // Як і маршрут, режим фіксується на старті: правила Anti-Fraud не змінюються посеред поїздки
+        backgroundRecording = AppSettings.backgroundRecordingEnabled && backgroundRecordingAvailability == .available
+        screenTracker.reset()
         lastCoordinate = nil
         lastCoordinateTime = -.infinity
         let formatter = DateFormatter()
@@ -74,14 +77,16 @@ extension SensorManager {
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         // На початку файлу - параметри алгоритмів, версія застосунку і пристрій
         if let error = csvWriter.open(fileName: "Velox_Data_\(formatter.string(from: now)).csv",
-                                      metadata: TripMetadata.recording(startedAt: now, route: recordRoute)) {
+                                      metadata: TripMetadata.recording(startedAt: now, route: recordRoute,
+                                                                         background: backgroundRecording)) {
             showMessage(error)
             return
         }
 
         isRecording = true
-        // Телефон у тримачі ніхто не торкається: без цього iOS погасить екран,
-        // застосунок втратить активність (штраф) і перестане отримувати дані
+        // Телефон у тримачі ніхто не торкається: без цього iOS погасить екран сама.
+        // Без фонового режиму це штраф і кінець даних; з ним екран можна блокувати
+        // вручну, але жива карта корисна, тож за замовчуванням екран лишається ввімкненим
         UIApplication.shared.isIdleTimerDisabled = true
 
         startTime = Date()
@@ -102,11 +107,15 @@ extension SensorManager {
         lastSpeedTime = -.infinity
 
         if locationAuthorized {
+            setBackgroundLocation(enabled: backgroundRecording)
             locationManager.startUpdatingLocation()
         }
 
         // Кожен запис починається з калібрування
         beginCalibration(event: "CalibrationStart")
+        if AppSettings.liveActivityEnabled {
+            liveActivity.start(startedAt: now, state: liveActivityState())
+        }
 
         motionManager.deviceMotionUpdateInterval = VeloxConfig.sampleInterval
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] (motion, error) in
@@ -132,6 +141,10 @@ extension SensorManager {
             callStartedAt = nil
         }
         retryCalibrationAt = nil
+        // Підсумок лишається на заблокованому екрані ще кілька хвилин
+        liveActivity.end(state: liveActivityState(status: "Поїздку завершено"))
+        setBackgroundLocation(enabled: false)
+        backgroundRecording = false
         isRecording = false
         isCalibrating = false
         calibration = nil

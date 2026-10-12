@@ -65,6 +65,8 @@ nonisolated enum AppSettings {
     static let saveRouteKey = "saveRoute"
     static let showLiveMapKey = "showLiveMap"
     static let showTrafficKey = "showTraffic"
+    static let backgroundRecordingKey = "backgroundRecording"
+    static let liveActivityKey = "liveActivity"
 
     // Значення за замовчуванням - увімкнено (ключа ще немає в UserDefaults)
     static var hapticsEnabled: Bool {
@@ -74,6 +76,15 @@ nonisolated enum AppSettings {
     // Маршрут - це особисті дані, тому за замовчуванням вимкнено
     static var saveRouteEnabled: Bool {
         UserDefaults.standard.bool(forKey: saveRouteKey)
+    }
+
+    // Запис із вимкненим екраном і Live Activity за замовчуванням увімкнено
+    static var backgroundRecordingEnabled: Bool {
+        UserDefaults.standard.object(forKey: backgroundRecordingKey) as? Bool ?? true
+    }
+
+    static var liveActivityEnabled: Bool {
+        UserDefaults.standard.object(forKey: liveActivityKey) as? Bool ?? true
     }
 }
 

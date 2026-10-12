@@ -7,7 +7,7 @@ config - поточні параметри (AppConfig): графіки пока�
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..events import distraction_episodes
+from ..events import distraction_episodes, screen_off_intervals
 from ..scoring import classify_score
 from .common import (CALL_COLOR, DISTRACTION_COLOR, EVENT_STYLE, RAW_COLOR, break_gaps, draw_threshold,
                      finish_trip_plot, save, shade_calibration, unique_legend)
@@ -38,6 +38,8 @@ def raw_vs_filtered(trip, config, out_dir):
     for episode in distraction_episodes(events):
         for start, end in episode:
             ax.axvspan(start, end, color=DISTRACTION_COLOR, alpha=0.12, label="Телефон у руках")
+    for start, end in screen_off_intervals(events, t[-1]):
+        ax.axvspan(start, end, color="#1764E8", alpha=0.08, label="Екран заблоковано (запис у фоні)")
     for ts in events[events["Event"] == "CalibrationDirectionFix"]["Timestamp"]:
         ax.axvline(ts, color="black", linestyle="--", linewidth=1.2, alpha=0.7,
                    label="Напрям руху виправлено за поворотами (без GPS)")

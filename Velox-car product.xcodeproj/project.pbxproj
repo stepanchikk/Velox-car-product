@@ -50,23 +50,23 @@
 		FD99CDC8307D6162002F6729 /* VeloxWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VeloxWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD99CDCA307D6162002F6729 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		FD99CDCC307D6163002F6729 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		FD99CE0A307D6767002F6729 /* events.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = events.py; sourceTree = "<group>"; };
+		FD99CE0B307D677C002F6729 /* loader.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = loader.py; sourceTree = "<group>"; };
+		FD99CE0C307D678C002F6729 /* summary.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = summary.py; sourceTree = "<group>"; };
+		FD99CE0D307D679C002F6729 /* report.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = report.py; sourceTree = "<group>"; };
+		FD99CE0E307D67BB002F6729 /* trip_plots.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = trip_plots.py; sourceTree = "<group>"; };
+		FD99CE0F307D67E4002F6729 /* test_core.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = test_core.py; sourceTree = "<group>"; };
 		FD9DAC80305349500025AF32 /* Velox-car product.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Velox-car product.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		FDFBC130307D111600E2EB3C /* test_core.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = test_core.py; sourceTree = "<group>"; };
 		FDFBC132307D111600E2EB3C /* __init__.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = __init__.py; sourceTree = "<group>"; };
 		FDFBC133307D111600E2EB3C /* common.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = common.py; sourceTree = "<group>"; };
 		FDFBC134307D111600E2EB3C /* overview.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = overview.py; sourceTree = "<group>"; };
-		FDFBC135307D111600E2EB3C /* trip_plots.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = trip_plots.py; sourceTree = "<group>"; };
 		FDFBC137307D111600E2EB3C /* __init__.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = __init__.py; sourceTree = "<group>"; };
 		FDFBC138307D111600E2EB3C /* __main__.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = __main__.py; sourceTree = "<group>"; };
 		FDFBC139307D111600E2EB3C /* checks.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = checks.py; sourceTree = "<group>"; };
 		FDFBC13A307D111600E2EB3C /* cli.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = cli.py; sourceTree = "<group>"; };
 		FDFBC13B307D111600E2EB3C /* config.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = config.py; sourceTree = "<group>"; };
-		FDFBC13C307D111600E2EB3C /* events.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = events.py; sourceTree = "<group>"; };
 		FDFBC13D307D111600E2EB3C /* filtering.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = filtering.py; sourceTree = "<group>"; };
-		FDFBC13E307D111600E2EB3C /* loader.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = loader.py; sourceTree = "<group>"; };
-		FDFBC13F307D111600E2EB3C /* report.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = report.py; sourceTree = "<group>"; };
 		FDFBC140307D111600E2EB3C /* scoring.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = scoring.py; sourceTree = "<group>"; };
-		FDFBC141307D111600E2EB3C /* summary.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = summary.py; sourceTree = "<group>"; };
 		FDFBC142307D111600E2EB3C /* trip.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = trip.py; sourceTree = "<group>"; };
 		FDFBC144307D111600E2EB3C /* analyzer.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = analyzer.py; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -174,7 +174,7 @@
 		FDFBC131307D111600E2EB3C /* tests */ = {
 			isa = PBXGroup;
 			children = (
-				FDFBC130307D111600E2EB3C /* test_core.py */,
+				FD99CE0F307D67E4002F6729 /* test_core.py */,
 			);
 			path = tests;
 			sourceTree = "<group>";
@@ -183,9 +183,9 @@
 			isa = PBXGroup;
 			children = (
 				FDFBC132307D111600E2EB3C /* __init__.py */,
+				FD99CE0E307D67BB002F6729 /* trip_plots.py */,
 				FDFBC133307D111600E2EB3C /* common.py */,
 				FDFBC134307D111600E2EB3C /* overview.py */,
-				FDFBC135307D111600E2EB3C /* trip_plots.py */,
 			);
 			path = plots;
 			sourceTree = "<group>";
@@ -198,13 +198,13 @@
 				FDFBC138307D111600E2EB3C /* __main__.py */,
 				FDFBC139307D111600E2EB3C /* checks.py */,
 				FDFBC13A307D111600E2EB3C /* cli.py */,
+				FD99CE0A307D6767002F6729 /* events.py */,
 				FDFBC13B307D111600E2EB3C /* config.py */,
-				FDFBC13C307D111600E2EB3C /* events.py */,
 				FDFBC13D307D111600E2EB3C /* filtering.py */,
-				FDFBC13E307D111600E2EB3C /* loader.py */,
-				FDFBC13F307D111600E2EB3C /* report.py */,
+				FD99CE0B307D677C002F6729 /* loader.py */,
+				FD99CE0D307D679C002F6729 /* report.py */,
+				FD99CE0C307D678C002F6729 /* summary.py */,
 				FDFBC140307D111600E2EB3C /* scoring.py */,
-				FDFBC141307D111600E2EB3C /* summary.py */,
 				FDFBC142307D111600E2EB3C /* trip.py */,
 			);
 			path = velox_analytics;

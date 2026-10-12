@@ -213,6 +213,9 @@ struct TripDetailView: View {
                     if let seconds = trip.stats.distractionSeconds, distractions > 0 {
                         LabeledContent("Телефон у руках", value: TripFormat.duration(seconds))
                     }
+                    if trip.stats.screenOffSeconds > 0 {
+                        LabeledContent("З вимкненим екраном", value: TripFormat.duration(trip.stats.screenOffSeconds))
+                    }
                 } else {
                     Text("Файл записано старою версією: події в ньому не позначено")
                         .foregroundStyle(.secondary)

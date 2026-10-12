@@ -8,9 +8,9 @@ import unittest
 
 import numpy as np
 
-from velox_analytics.config import AppConfig, SWIFT_KEYS, load_config, parse_config
+from velox_analytics.config import AppConfig, SWIFT_KEYS, find_config, load_config, parse_config
 from velox_analytics.events import (calibration_windows, count_calls, distraction_episodes,
-                                   distractions_at_call_start, episode_seconds)
+                                   distractions_at_call_start, episode_seconds, screen_off_intervals)
 from velox_analytics.filtering import apply_filter, count_maneuvers, detect_maneuvers, reconstruct_raw
 from velox_analytics.loader import load_trip, read_metadata
 from velox_analytics.report import trip_checks, trip_started, write_reports
@@ -32,14 +32,13 @@ class ConfigTests(unittest.TestCase):
 
     def test_real_config_has_all_keys(self):
         # VeloxConfig.swift проєкту має містити всі параметри, які читає аналітика
-        here = os.path.dirname(os.path.abspath(__file__))
-        for path in (os.path.join(here, "..", "..", "VeloxConfig.swift"),
-                     os.path.join(here, "..", "VeloxConfig.swift")):
-            if os.path.isfile(path):
-                with open(path, encoding="utf-8") as f:
-                    self.assertEqual(set(parse_config(f.read())), set(SWIFT_KEYS))
-                return
-        self.skipTest("VeloxConfig.swift не знайдено")
+        # Той самий пошук, що й в analyzer.py: від каталогу Analytics на два рівні вгору
+        analytics_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = find_config(analytics_dir)
+        if path is None:
+            self.skipTest("VeloxConfig.swift не знайдено")
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(set(parse_config(f.read())), set(SWIFT_KEYS))
 
     def test_defaults_without_file(self):
         config, source = load_config(None)
@@ -99,6 +98,10 @@ class EventsTests(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertAlmostEqual(found[0][1], 0.2, places=6)
 
+    def test_screen_off_intervals(self):
+        events = {"Timestamp": [10, 70, 100], "Event": ["ScreenLocked", "ScreenUnlocked", "ScreenLocked"]}
+        self.assertEqual(screen_off_intervals(events, 130), [(10.0, 70.0), (100.0, 130.0)])
+
     def test_calls(self):
         self.assertEqual(count_calls(["CallIncoming", "CallStart", "CallEnd", "CallStart_Handheld", "CallEnd"]), 2)
 
@@ -157,6 +160,20 @@ class LoaderTests(unittest.TestCase):
         trip = load_trip(path, CONFIG)
         np.testing.assert_allclose(trip.raw, raw, atol=1e-12)
         self.assertFalse(trip.has_event_column)
+
+    def test_delayed_rows_are_ordered_and_not_samples(self):
+        # Запис із вимкненим екраном: ScreenLocked і Distraction записано пізніше,
+        # але з часом втрати активності
+        rows = ["# background=on", "Timestamp,Filtered_Y,Event,Raw_Y,Score",
+                "0.0,0,CalibrationStart,0,100", "2.0,0,CalibrationDone,0,100"]
+        rows += [f"{2 + i / 10:.1f},0.05,,0.05,100" for i in range(1, 30)]
+        rows += ["3.0,0.05,ScreenLocked,0.05,100", "4.9,0.05,,0.05,100",
+                 "4.0,0.05,ScreenUnlocked,0.05,100", "4.0,0.05,Distraction,0.05,95"]
+        trip = load_trip(self.write("\n".join(rows) + "\n"), CONFIG)
+        self.assertTrue((np.diff(trip.t) >= 0).all(), "виміри впорядковано за часом")
+        self.assertEqual(len(trip.t), 30, "службові рядки не стали вимірами")
+        self.assertEqual(list(trip.events["Event"]), ["CalibrationStart", "CalibrationDone", "ScreenLocked",
+                                                      "ScreenUnlocked", "Distraction"])
 
     def test_rejects_unrelated_csv(self):
         self.assertIsNone(load_trip(self.write("a,b\n1,2\n"), CONFIG))
