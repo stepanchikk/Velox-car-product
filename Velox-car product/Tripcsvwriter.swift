@@ -4,6 +4,17 @@ import Foundation
 nonisolated struct RoutePoint: Hashable, Sendable {
     let latitude: Double
     let longitude: Double
+
+    /// Відстань до іншої точки по поверхні Землі, м (формула гаверсинусів)
+    func distance(to other: RoutePoint) -> Double {
+        let earthRadius = 6_371_000.0
+        let lat1 = latitude * .pi / 180
+        let lat2 = other.latitude * .pi / 180
+        let dLat = lat2 - lat1
+        let dLon = (other.longitude - longitude) * .pi / 180
+        let a = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2)
+        return 2 * earthRadius * asin(min(1, a.squareRoot()))
+    }
 }
 
 /// Один рядок CSV поїздки (порядок колонок відповідає TripCSVWriter.header)

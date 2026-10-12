@@ -1,10 +1,13 @@
 import SwiftUI
+import MapKit
 
-// Екран поїздки: стан запису, оцінка наживо, поздовжнє прискорення, лічильники подій
+// Екран поїздки: стан запису, оцінка наживо, жива карта, поздовжнє прискорення, лічильники подій
 struct TrackerView: View {
     // Об'єкт створюється в MainTabView і передається через середовище
     @EnvironmentObject private var sensorManager: SensorManager
     @AppStorage(AppSettings.showLiveAccelerationKey) private var showLiveAcceleration = true
+    @AppStorage(AppSettings.showLiveMapKey) private var showLiveMap = true
+    @AppStorage(AppSettings.showTrafficKey) private var showTraffic = true
 
     var body: some View {
         ScrollView {
@@ -20,6 +23,15 @@ struct TrackerView: View {
                     calibrationPanel
                 } else if !sensorManager.isRecording {
                     idleHint
+                }
+
+                if showLiveMap && sensorManager.isLiveMapAvailable {
+                    // .equatable(): екран оновлюється 10 разів на секунду (прискорення),
+                    // а карту варто перемальовувати лише коли змінились її дані
+                    LiveTripMap(route: sensorManager.liveRoute,
+                                speedKmh: sensorManager.currentSpeedKmh,
+                                showsTraffic: showTraffic)
+                        .equatable()
                 }
 
                 counters
@@ -208,6 +220,76 @@ struct TrackerView: View {
         case .distracted: return VeloxColor.danger
         case .onCall: return VeloxColor.accent
         }
+    }
+}
+
+// MARK: - Жива карта
+
+/// Карта поточної поїздки: позиція, пройдений шлях, мітки подій, пробки і швидкість.
+/// Камера сама стежить за авто і повертається за напрямом руху, тому торкатися
+/// карти за кермом не потрібно.
+struct LiveTripMap: View, Equatable {
+    let route: LiveRoute
+    let speedKmh: Double?
+    let showsTraffic: Bool
+
+    @State private var camera: MapCameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+
+    // Швидкість порівнюється з точністю до 1 км/год: дрібніші зміни на екрані не видно
+    static func == (lhs: LiveTripMap, rhs: LiveTripMap) -> Bool {
+        lhs.route == rhs.route
+            && lhs.speedKmh.map { Int($0.rounded()) } == rhs.speedKmh.map { Int($0.rounded()) }
+            && lhs.showsTraffic == rhs.showsTraffic
+    }
+
+    var body: some View {
+        Map(position: $camera) {
+            UserAnnotation()
+            if route.points.count >= 2 {
+                MapPolyline(coordinates: route.points.map { $0.coordinate })
+                    .stroke(VeloxColor.accent, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+            }
+            ForEach(route.events) { event in
+                Marker(event.kind.title, systemImage: event.kind.systemImage,
+                       coordinate: event.point.coordinate)
+                    .tint(event.kind.color)
+            }
+        }
+        .mapStyle(.standard(emphasis: .muted, pointsOfInterest: .excludingAll, showsTraffic: showsTraffic))
+        .mapControls {
+            // Якщо карту зсунули пальцем, кнопка повертає стеження за авто
+            MapUserLocationButton()
+            MapCompass()
+        }
+        .overlay(alignment: .bottomLeading) {
+            speedBadge
+                .padding(12)
+        }
+        .frame(height: 260)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(VeloxColor.hairline, lineWidth: 1)
+        )
+    }
+
+    private var speedBadge: some View {
+        VStack(spacing: 0) {
+            Text(speedKmh.map { "\(Int($0.rounded()))" } ?? "-")
+                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+            Text("км/год")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(minWidth: 64)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(speedKmh.map { "Швидкість \(Int($0.rounded())) кілометрів на годину" }
+                            ?? "Швидкість невідома")
     }
 }
 

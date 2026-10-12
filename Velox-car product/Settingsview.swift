@@ -11,6 +11,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.hapticsKey) private var haptics = true
     @AppStorage(AppSettings.showLiveAccelerationKey) private var showLiveAcceleration = true
     @AppStorage(AppSettings.saveRouteKey) private var saveRoute = false
+    @AppStorage(AppSettings.showLiveMapKey) private var showLiveMap = true
+    @AppStorage(AppSettings.showTrafficKey) private var showTraffic = true
 
     @State private var confirmDeleteTrips = false
     @State private var confirmDeleteProfile = false
@@ -32,10 +34,13 @@ struct SettingsView: View {
             Section {
                 Toggle("Вібрація на подіях", isOn: $haptics)
                 Toggle("Шкала прискорення на екрані поїздки", isOn: $showLiveAcceleration)
+                Toggle("Карта на екрані поїздки", isOn: $showLiveMap)
+                Toggle("Пробки на карті", isOn: $showTraffic)
+                    .disabled(!showLiveMap)
             } header: {
                 SectionTitle("Поїздка")
             } footer: {
-                Text("Вібрація підказує про різкий маневр чи відволікання, не відриваючи погляду від дороги.")
+                Text("Вібрація підказує про різкий маневр чи відволікання, не відриваючи погляду від дороги. Карта стежить за авто сама і показує пройдений шлях і події лише під час поїздки, нічого не зберігаючи.")
             }
 
             Section {
@@ -50,7 +55,7 @@ struct SettingsView: View {
             } footer: {
                 Text(saveRoute
                      ? "Координати пишуться у файл поїздки, і в підсумку видно маршрут з місцями подій. Файл лишається на телефоні, але потрапляє до CSV, яким ви ділитеся. Змінити можна між поїздками."
-                     : "Швидкість за GPS потрібна для калібрування напряму руху. Координати не зберігаються. Увімкніть «Зберігати маршрут», щоб бачити поїздку на карті.")
+                     : "Швидкість за GPS потрібна для калібрування напряму руху. Координати не зберігаються. Увімкніть «Зберігати маршрут», щоб бачити поїздку на карті в історії.")
             }
 
             Section {

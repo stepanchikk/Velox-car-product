@@ -85,6 +85,20 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     // Момент останнього коректного оновлення швидкості (секунди сесії)
     private var lastSpeedTime: TimeInterval = -.infinity
 
+    // Маршрут і мітки подій для живої карти на екрані поїздки. Тримаються лише
+    // в памʼяті, тому ведуться за будь-якого значення «Зберігати маршрут».
+    @Published private(set) var liveRoute = LiveRoute()
+
+    /// Швидкість для екрана, км/год; nil, якщо GPS давно мовчить
+    var currentSpeedKmh: Double? {
+        freshSpeed.map { $0 * 3.6 }
+    }
+
+    /// Жива карта має сенс лише під час запису з доступом до геолокації
+    var isLiveMapAvailable: Bool {
+        isRecording && locationAuthorized
+    }
+
     // Поздовжнє прискорення після калібрування (відфільтроване)
     @Published var currentGForceY: Double = 0.0
 
@@ -254,12 +268,16 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
             lastKnownSpeed = speed
             lastSpeedTime = time
         }
-        // Координати з поганою точністю (вулиця між висотками) не пишемо
-        if recordRoute, location.horizontalAccuracy >= 0,
+        // Координати з поганою точністю (вулиця між висотками) не пишемо і не малюємо
+        if location.horizontalAccuracy >= 0,
            location.horizontalAccuracy <= VeloxConfig.routeMaxHorizontalAccuracy {
-            lastCoordinate = RoutePoint(latitude: location.coordinate.latitude,
-                                        longitude: location.coordinate.longitude)
-            lastCoordinateTime = time
+            let point = RoutePoint(latitude: location.coordinate.latitude,
+                                   longitude: location.coordinate.longitude)
+            liveRoute.add(point, at: time)
+            if recordRoute {
+                lastCoordinate = point
+                lastCoordinateTime = time
+            }
         }
 
         guard isCalibrating else { return }
@@ -335,6 +353,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         case .counted:
             distractionCount += 1
             phoneState = .distracted
+            liveRoute.addEvent(.distraction, at: time, maxAge: Self.speedMaxAge)
             // Пишемо подію в CSV одразу, а не чекаємо наступного виміру
             appendEventRow(event: "Distraction", time: time)
             triggerHapticFeedback(style: .error)
@@ -507,6 +526,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
 
         // Спершу очищаємо дані і створюємо файл, потім вмикаємо сесію
         resetData()
+        liveRoute = LiveRoute()
 
         let now = Date()
         recordRoute = AppSettings.saveRouteEnabled && locationAuthorized
@@ -629,6 +649,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         hardBrakingCount = 0
         hardAccelerationCount = 0
         distractionCount = 0
+        liveRoute.clearEvents()
         distractionTracker.reset()
         handheldCallEpisode = false
         distractionSeconds = 0
@@ -840,8 +861,12 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         var event = ""
         if let maneuver = maneuverDetector.detect(filtered: currentGForceY, at: time) {
             switch maneuver {
-            case .hardBraking: hardBrakingCount += 1
-            case .hardAcceleration: hardAccelerationCount += 1
+            case .hardBraking:
+                hardBrakingCount += 1
+                liveRoute.addEvent(.hardBraking, at: time, maxAge: Self.speedMaxAge)
+            case .hardAcceleration:
+                hardAccelerationCount += 1
+                liveRoute.addEvent(.hardAcceleration, at: time, maxAge: Self.speedMaxAge)
             }
             triggerHapticFeedback(style: .error)
             event = maneuver.eventCode

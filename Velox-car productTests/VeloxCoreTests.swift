@@ -430,6 +430,60 @@ final class TripMetadataTests: XCTestCase {
         XCTAssertEqual(thinned.first, points.first)
         XCTAssertEqual(thinned.last, points.last)
     }
+
+    // 0.001° широти - це близько 111 м
+    func testPointDistance() {
+        let a = RoutePoint(latitude: 48.29, longitude: 25.93)
+        XCTAssertEqual(a.distance(to: a), 0, accuracy: 1e-9)
+        XCTAssertEqual(a.distance(to: RoutePoint(latitude: 48.291, longitude: 25.93)), 111.2, accuracy: 0.5)
+    }
+
+    // Жива карта: на стоянці GPS «тремтить», але лінія не росте
+    func testLiveRouteSkipsJitter() {
+        var route = LiveRoute()
+        XCTAssertTrue(route.add(RoutePoint(latitude: 48.29, longitude: 25.93), at: 0))
+        // ~1 м від попередньої точки
+        XCTAssertFalse(route.add(RoutePoint(latitude: 48.29001, longitude: 25.93), at: 1))
+        XCTAssertEqual(route.points.count, 1)
+        XCTAssertEqual(route.lastFixTime, 1, "координати свіжі, навіть якщо точку не додано")
+        // ~22 м: авто поїхало
+        XCTAssertTrue(route.add(RoutePoint(latitude: 48.2902, longitude: 25.93), at: 2))
+        XCTAssertEqual(route.points.count, 2)
+    }
+
+    // Мітка ставиться лише там, де координати свіжі
+    func testLiveRouteEvents() {
+        var route = LiveRoute()
+        XCTAssertFalse(route.addEvent(.hardBraking, at: 0, maxAge: 3), "без координат мітки немає")
+        let point = RoutePoint(latitude: 48.29, longitude: 25.93)
+        route.add(point, at: 10)
+        XCTAssertTrue(route.addEvent(.hardBraking, at: 12, maxAge: 3))
+        XCTAssertFalse(route.addEvent(.distraction, at: 14, maxAge: 3), "GPS мовчить довше за 3 с")
+        XCTAssertEqual(route.events.map(\.kind), [.hardBraking])
+        XCTAssertEqual(route.events[0].point, point)
+
+        // «Скинути»: мітки зникають, лінія лишається, номери нових міток не повторюються
+        route.clearEvents()
+        XCTAssertTrue(route.events.isEmpty)
+        XCTAssertEqual(route.points.count, 1)
+        route.addEvent(.distraction, at: 12.5, maxAge: 3)
+        XCTAssertEqual(route.events.map(\.id), [1])
+    }
+
+    // Довга поїздка: памʼять обмежена, кінці лінії не губляться
+    func testLiveRouteLimit() {
+        var route = LiveRoute()
+        let count = VeloxConfig.liveRouteMaxPoints + 1
+        // крок 0.0001° (~11 м) більший за мінімальний
+        let points = (0..<count).map { RoutePoint(latitude: 48 + Double($0) * 0.0001, longitude: 25) }
+        for (i, point) in points.enumerated() {
+            route.add(point, at: Double(i))
+        }
+        XCTAssertLessThanOrEqual(route.points.count, VeloxConfig.liveRouteMaxPoints)
+        XCTAssertEqual(route.points.count, count / 2 + 1)
+        XCTAssertEqual(route.points.first, points.first)
+        XCTAssertEqual(route.points.last, points.last)
+    }
 }
 
 // MARK: - Вектори

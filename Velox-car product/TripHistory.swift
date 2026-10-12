@@ -228,6 +228,57 @@ nonisolated struct TripRoute: Equatable, Sendable {
     }
 }
 
+// MARK: - Маршрут наживо
+
+/// Маршрут поточної поїздки для карти на екрані запису. Живе лише в памʼяті:
+/// у файл координати пишуться окремо і тільки з увімкненим «Зберігати маршрут».
+nonisolated struct LiveRoute: Equatable, Sendable {
+    private(set) var points: [RoutePoint] = []
+    private(set) var events: [TripRoute.Event] = []
+    // Час останніх координат GPS, с від «Старт» (і тоді, коли точку не додано)
+    private(set) var lastFixTime: TimeInterval = -.infinity
+    // Номери подій лише зростають, щоб карта не плутала старі мітки з новими
+    private var nextEventId = 0
+
+    /// Нові координати з GPS. Точка додається, лише якщо авто відʼїхало далі
+    /// за liveRouteMinStep від попередньої. Повертає true, якщо лінія змінилася.
+    @discardableResult
+    mutating func add(_ point: RoutePoint, at time: TimeInterval) -> Bool {
+        lastFixTime = time
+        if let last = points.last, last.distance(to: point) < VeloxConfig.liveRouteMinStep {
+            return false
+        }
+        points.append(point)
+        if points.count > VeloxConfig.liveRouteMaxPoints {
+            points = Self.halve(points)
+        }
+        return true
+    }
+
+    /// Мітка події в останній точці маршруту. Якщо координати старші за maxAge
+    /// (тунель, GPS вимкнено), мітка не ставиться: місце було б неправдивим.
+    @discardableResult
+    mutating func addEvent(_ kind: TripRoute.EventKind, at time: TimeInterval, maxAge: TimeInterval) -> Bool {
+        guard let point = points.last, time - lastFixTime <= maxAge else { return false }
+        events.append(TripRoute.Event(id: nextEventId, kind: kind, point: point, time: time))
+        nextEventId += 1
+        return true
+    }
+
+    /// Кнопка «Скинути» обнуляє лічильники, тому зникають і їхні мітки; лінія лишається
+    mutating func clearEvents() {
+        events = []
+    }
+
+    /// Кожна друга точка; перша й остання лишаються
+    static func halve(_ points: [RoutePoint]) -> [RoutePoint] {
+        guard points.count > 2 else { return points }
+        var result = stride(from: 0, to: points.count - 1, by: 2).map { points[$0] }
+        result.append(points[points.count - 1])
+        return result
+    }
+}
+
 // MARK: - Поїздка у списку
 
 nonisolated struct TripSummary: Identifiable, Hashable, Sendable {

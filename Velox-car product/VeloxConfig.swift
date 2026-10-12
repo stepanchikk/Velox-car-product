@@ -61,6 +61,11 @@ nonisolated enum VeloxConfig {
 
     // Координати з точністю гірше за цю (м) у файл не пишуться
     static let routeMaxHorizontalAccuracy: Double = 50.0
+    // Жива карта: нова точка лінії, лише якщо авто відʼїхало далі за цю відстань, м
+    // (на стоянці координати GPS «тремтять» на кілька метрів)
+    static let liveRouteMinStep: Double = 5.0
+    // Більше точок у памʼяті не тримаємо: лінія проріджується вдвічі
+    static let liveRouteMaxPoints: Int = 2000
 
     // MARK: Перекалібрування
 

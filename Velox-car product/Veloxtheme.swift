@@ -63,6 +63,8 @@ nonisolated enum AppSettings {
     static let hapticsKey = "hapticsEnabled"
     static let showLiveAccelerationKey = "showLiveAcceleration"
     static let saveRouteKey = "saveRoute"
+    static let showLiveMapKey = "showLiveMap"
+    static let showTrafficKey = "showTraffic"
 
     // Значення за замовчуванням - увімкнено (ключа ще немає в UserDefaults)
     static var hapticsEnabled: Bool {
