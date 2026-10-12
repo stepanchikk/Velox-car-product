@@ -9,10 +9,13 @@ import unittest
 import numpy as np
 
 from velox_analytics.config import AppConfig, SWIFT_KEYS, load_config, parse_config
-from velox_analytics.events import calibration_windows, count_calls, distraction_episodes, episode_seconds
+from velox_analytics.events import (calibration_windows, count_calls, distraction_episodes,
+                                   distractions_at_call_start, episode_seconds)
 from velox_analytics.filtering import apply_filter, count_maneuvers, detect_maneuvers, reconstruct_raw
 from velox_analytics.loader import load_trip, read_metadata
+from velox_analytics.report import trip_checks, trip_started, write_reports
 from velox_analytics.scoring import classify_score, duration_penalty, safety_score, trips_word
+from velox_analytics.summary import trip_row
 
 CONFIG = AppConfig()
 
@@ -88,6 +91,14 @@ class EventsTests(unittest.TestCase):
         self.assertEqual(len(episodes), 2)
         self.assertEqual(episode_seconds(episodes), [9.0, 5.0])
 
+    def test_distraction_right_after_handsfree_call(self):
+        # Поїздка 12.10.2026: CarPlay-дзвінок на 38.98 с, відволікання на 39.18 с
+        events = {"Timestamp": [38.98, 39.18, 48.37, 60.0, 70.0],
+                  "Event": ["CallStart", "Distraction", "CallEnd", "CallStart_Handheld", "Distraction"]}
+        found = distractions_at_call_start(events, 2.0)
+        self.assertEqual(len(found), 1)
+        self.assertAlmostEqual(found[0][1], 0.2, places=6)
+
     def test_calls(self):
         self.assertEqual(count_calls(["CallIncoming", "CallStart", "CallEnd", "CallStart_Handheld", "CallEnd"]), 2)
 
@@ -149,6 +160,50 @@ class LoaderTests(unittest.TestCase):
 
     def test_rejects_unrelated_csv(self):
         self.assertIsNone(load_trip(self.write("a,b\n1,2\n"), CONFIG))
+
+
+CARPLAY_TRIP = ["# format=3", "# started=2026-10-12T14:45:36+03:00", "# maneuverThreshold=0.4",
+                "Timestamp,Filtered_Y,Event,Raw_Y,Score,Speed_mps",
+                "0.0,0,CalibrationStart,0,100,", "2.0,0,CalibrationDone,0,100,5"]
+CARPLAY_TRIP += [f"{2 + i / 10:.1f},0.01,,0.01,100,5" for i in range(1, 40)]
+CARPLAY_TRIP += ["5.95,0.01,CallStart,0.01,100,5", "6.0,0.01,Distraction,0.01,95,5", "9.0,0.01,CallEnd,0.01,95,5",
+                 "9.5,0.01,DistractionEnd,0.01,95,5", "9.6,0.01,,0.01,95,5"]
+
+
+class ReportTests(unittest.TestCase):
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "Velox_Data_2026-10-12_14-45-36.csv")
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write("\n".join(CARPLAY_TRIP) + "\n")
+        self.trip = load_trip(self.path, CONFIG)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.dir)
+
+    def test_checks(self):
+        checks = {c.title: c.status for c in trip_checks(self.trip, trip_row(self.trip))}
+        self.assertEqual(checks["Маневри в CSV збігаються з перерахунком"], "ok")
+        self.assertEqual(checks["Safety Score збігається з формулою"], "ok")
+        self.assertEqual(checks["Відволікання на початку розмови без рук"], "warn")
+        self.assertEqual(checks["Калібрування за GPS не перевірено"], "info")
+
+    def test_started_from_metadata_or_name(self):
+        self.assertEqual(trip_started(self.trip).strftime("%d.%m.%Y %H:%M"), "12.10.2026 14:45")
+        self.trip.metadata.pop("started")
+        self.assertEqual(trip_started(self.trip).strftime("%H:%M:%S"), "14:45:36")
+
+    def test_pages_written(self):
+        index = write_reports([self.trip], CONFIG, "VeloxConfig.swift", None, self.dir)
+        with open(index, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn('href="Velox_Data_2026-10-12_14-45-36.html"', text)
+        with open(os.path.join(self.dir, "Velox_Data_2026-10-12_14-45-36.html"), encoding="utf-8") as f:
+            page = f.read()
+        self.assertIn("Поїздка 12.10.2026, 14:45", page)
+        self.assertIn("CallStart", page)
 
 
 if __name__ == "__main__":

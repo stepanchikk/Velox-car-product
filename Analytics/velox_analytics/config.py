@@ -29,6 +29,7 @@ SWIFT_KEYS = {
     "mediumScoreMin": ("medium_score_min", int),
     "ratingDistanceKm": ("rating_distance_km", float),
     "ratingFallbackSpeedKmh": ("rating_fallback_speed_kmh", float),
+    "callFocusLossGrace": ("call_focus_loss_grace", float),
 }
 
 # Напрям руху за поворотами: ті самі пороги, що в YawForwardEstimator
@@ -62,6 +63,7 @@ class AppConfig:
     medium_score_min: int = 75
     rating_distance_km: float = 10.0     # оцінка водія: штрафи на стільки км
     rating_fallback_speed_kmh: float = 30.0  # поїздки без GPS: відстань за тривалістю
+    call_focus_loss_grace: float = 2.0   # дзвінок, що почався раніше на стільки с, - причина втрати активності
 
     @property
     def alphas(self):

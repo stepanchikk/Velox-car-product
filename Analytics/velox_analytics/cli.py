@@ -12,6 +12,7 @@ from .checks import gps_check, trip_distance_km, yaw_check
 from .config import find_config, load_config
 from .loader import load_trip
 from .plots import overview, trip_plots
+from .report import write_reports
 from .scoring import driver_rating, trips_word
 from .summary import check_consistency, summarize
 
@@ -119,7 +120,9 @@ def main(argv=None, script_dir=None):
         value, count, km = rating
         print(f"Оцінка водія (як на головній): {value} за {count} {trips_word(count)}, "
               f"штрафи на {config.rating_distance_km:g} км, пробіг для розрахунку {km:.1f} км")
+    report = write_reports(trips, config, source, rating, out_dir)
     print(f"\nГрафіки та summary.csv збережено в: {out_dir}")
+    print(f"HTML-звіт: {report}")
 
     if args.show:
         plt.show()

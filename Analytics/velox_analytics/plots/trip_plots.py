@@ -153,12 +153,13 @@ def route(trip, out_dir):
                    edgecolor="black", label="Відволікання")
 
     ax.set_aspect(1 / k)
+    ax.ticklabel_format(useOffset=False, style="plain")   # повні координати замість «+4.826e1»
     ax.set_title(f"Маршрут: {trip.name}")
     ax.set_xlabel("Довгота, градуси")
     ax.set_ylabel("Широта, градуси")
     ax.grid(True, alpha=0.4)
     unique_legend(ax, loc="best")
-    return save(fig, out_dir, f"{trip.stem}_route.png")
+    return save(fig, out_dir, f"{trip.stem}_route.png", crop=True)
 
 
 def score_evolution(trip, config, out_dir):

@@ -50,6 +50,7 @@ enum LocationAccess: Equatable {
     }
 }
 
+
 /// Керуючий клас сесії запису. Отримує дані від сенсорів і системи, передає їх
 /// спеціалізованим компонентам і публікує стан для інтерфейсу:
 /// - OrientationCalibrator - калібрування орієнтації (OrientationCalibrator.swift);
@@ -58,11 +59,23 @@ enum LocationAccess: Equatable {
 ///   - обробка сигналу і виявлення подій (EventDetectors.swift);
 /// - SafetyScoreCalculator - модель штрафів (SafetyScore.swift);
 /// - TripCSVWriter - запис поїздки у файл (TripCSVWriter.swift).
+///
+/// Код класу розкладено по файлах за відповідальністю:
+/// - SensorManager.swift - стан, ініціалізація, годинник сесії, повідомлення;
+/// - SensorManager+Session.swift - старт, зупинка, скидання, доступ до геолокації;
+/// - SensorManager+Motion.swift - обробка вимірів CoreMotion і рядки CSV;
+/// - SensorManager+Calibration.swift - калібрування і перевірка напряму за поворотами;
+/// - SensorManager+AntiFraud.swift - втрата активності, відволікання, дзвінки;
+/// - SensorManager+Location.swift - геолокація, свіжість швидкості і координат.
+///
+/// Swift не дозволяє бачити private-члени з інших файлів, тому стан, яким
+/// користуються кілька розширень, оголошено без private. Змінювати його
+/// мають лише методи SensorManager; інтерфейс лише читає опубліковані значення.
 class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCallObserverDelegate {
-    private let motionManager = CMMotionManager()
-    private let locationManager = CLLocationManager()
+    let motionManager = CMMotionManager()
+    let locationManager = CLLocationManager()
     // Телефонні дзвінки: вхідний дзвінок і розмова без рук не є відволіканням
-    private let callObserver = CXCallObserver()
+    let callObserver = CXCallObserver()
 
     // Поріг перевантаження (також використовується в TrackerView для підсвічування)
     static let maneuverThreshold: Double = VeloxConfig.maneuverThreshold
@@ -70,11 +83,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     static let filterAlpha: Double = VeloxConfig.filterAlpha
     // Ручне перекалібрування дозволене лише "майже на стоянці" (безпека:
     // не заохочуємо водія натискати кнопки під час руху)
-    private static let manualRecalibrationMaxSpeed: Double = VeloxConfig.manualRecalibrationMaxSpeed
+    static let manualRecalibrationMaxSpeed: Double = VeloxConfig.manualRecalibrationMaxSpeed
     // Швидкість GPS старша за цей час вважається невідомою (тунель, паркінг)
-    private static let speedMaxAge: TimeInterval = 3.0
+    static let speedMaxAge: TimeInterval = 3.0
     // Розбіжність напряму за поворотами з поточним, після якої калібрування виправляється
-    private static let yawCorrectionAngle: Double = 20.0
+    static let yawCorrectionAngle: Double = 20.0
 
     // isRecording = сесія активна (калібрування або запис)
     @Published var isRecording = false
@@ -83,11 +96,11 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     @Published var calibrationInfo: String = ""
     @Published var lastKnownSpeed: Double = 0.0
     // Момент останнього коректного оновлення швидкості (секунди сесії)
-    private var lastSpeedTime: TimeInterval = -.infinity
+    var lastSpeedTime: TimeInterval = -.infinity
 
     // Маршрут і мітки подій для живої карти на екрані поїздки. Тримаються лише
     // в памʼяті, тому ведуться за будь-якого значення «Зберігати маршрут».
-    @Published private(set) var liveRoute = LiveRoute()
+    @Published var liveRoute = LiveRoute()
 
     /// Швидкість для екрана, км/год; nil, якщо GPS давно мовчить
     var currentSpeedKmh: Double? {
@@ -107,8 +120,8 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     @Published var distractionCount: Int = 0
     // Сумарний час з телефоном у руках і штраф за тривалість (оновлюються,
     // коли водій повертається до застосунку)
-    @Published private(set) var distractionSeconds: TimeInterval = 0
-    @Published private(set) var distractionDurationPenalty: Int = 0
+    @Published var distractionSeconds: TimeInterval = 0
+    @Published var distractionDurationPenalty: Int = 0
     @Published var phoneState: SessionState = .idle
 
     // Обчислюється з лічильників, тому завжди узгоджений з ними
@@ -131,61 +144,61 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     @Published var showLocationDeniedPrompt = false  // доступу немає: Налаштування або без GPS
 
     // Компоненти
-    private let calibrator = OrientationCalibrator()
-    private var calibration: CalibrationResult?
-    private var filter = LowPassFilter(alpha: SensorManager.filterAlpha)
-    private var maneuverDetector = ManeuverDetector(threshold: SensorManager.maneuverThreshold,
+    let calibrator = OrientationCalibrator()
+    var calibration: CalibrationResult?
+    var filter = LowPassFilter(alpha: SensorManager.filterAlpha)
+    var maneuverDetector = ManeuverDetector(threshold: SensorManager.maneuverThreshold,
                                                     cooldown: VeloxConfig.maneuverCooldown)
-    private var distractionTracker = DistractionTracker()
-    private var orientationDetector = OrientationChangeDetector()
-    private let csvWriter = TripCSVWriter()
+    var distractionTracker = DistractionTracker()
+    var orientationDetector = OrientationChangeDetector()
+    let csvWriter = TripCSVWriter()
 
     // Втрата активності, яку ще не класифіковано (див. handleFocusLost)
-    private var pendingFocusLoss: (time: TimeInterval, callWasActive: Bool)?
+    var pendingFocusLoss: (time: TimeInterval, callWasActive: Bool)?
     // Дзвінок триває (записано CallIncoming або CallStart, ще немає CallEnd)
-    private var callInProgress = false
+    var callInProgress = false
     // Коли почався дзвінок (секунди сесії), щоб відрізнити екран розмови,
     // відкритий системою, від виходу водія із застосунку під час розмови
-    private var callStartedAt: TimeInterval?
+    var callStartedAt: TimeInterval?
     // Відволікання почалось через розмову з телефоном біля вуха
-    private var handheldCallEpisode = false
+    var handheldCallEpisode = false
 
     // Калібрування в цій поїздці вже вдавалось: далі йдуть перекалібрування в русі
-    private var hasCalibrated = false
+    var hasCalibrated = false
     // Без GPS напрям руху перевіряється за поворотами (див. checkYawEstimate)
-    private var yawEstimator: YawForwardEstimator?
+    var yawEstimator: YawForwardEstimator?
     // Наступна перевірка - коли накопичиться стільки "енергії" поворотів
-    private var nextYawCheckEnergy: Double = YawForwardEstimator.requiredEnergy
-    private var yawDirectionChecked = false
+    var nextYawCheckEnergy: Double = YawForwardEstimator.requiredEnergy
+    var yawDirectionChecked = false
     // Час сесії, коли повторити невдале перекалібрування
-    private var retryCalibrationAt: TimeInterval?
+    var retryCalibrationAt: TimeInterval?
 
-    private var forwardPhaseLogged = false
+    var forwardPhaseLogged = false
     // Після системного діалогу дозволу запис стартує автоматично
-    private var startAfterAuthorization = false
+    var startAfterAuthorization = false
     // Користувач уже погодився записувати без GPS у цьому запуску застосунку
-    private var userAcceptedFallback = false
+    var userAcceptedFallback = false
 
-    private var locationAuthorized: Bool {
+    var locationAuthorized: Bool {
         locationStatus == .authorized
     }
 
     // Останні значення, які потрапляють у рядки CSV
-    private var lastRawLongitudinal: Double = 0.0
-    private var lastUserAcceleration: Vector3 = Vector3.zero
-    private var lastRotationRate: Vector3 = Vector3.zero
+    var lastRawLongitudinal: Double = 0.0
+    var lastUserAcceleration: Vector3 = Vector3.zero
+    var lastRotationRate: Vector3 = Vector3.zero
 
     // Маршрут: пишеться лише з увімкненим «Зберігати маршрут» і доступом до геолокації.
     // Налаштування фіксується на старті, щоб файл не змінював формат посеред поїздки.
-    private var recordRoute = false
-    private var lastCoordinate: RoutePoint?
-    private var lastCoordinateTime: TimeInterval = -.infinity
+    var recordRoute = false
+    var lastCoordinate: RoutePoint?
+    var lastCoordinateTime: TimeInterval = -.infinity
 
     // Єдиний годинник сесії: секунди від натискання «Старт».
     // CoreMotion рахує час від увімкнення пристрою (як systemUptime), а GPS дає
     // настінний час (Date), тому фіксуємо обидва моменти старту одночасно.
-    private var startTime: Date = Date()
-    private var startUptime: TimeInterval = 0
+    var startTime: Date = Date()
+    var startUptime: TimeInterval = 0
 
     override init() {
         super.init()
@@ -235,691 +248,23 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
         }
     }
 
-    // MARK: - CLLocationManagerDelegate
-
-    private func currentLocationAccess() -> LocationAccess {
-        switch locationManager.authorizationStatus {
-        case .notDetermined:
-            return .notDetermined
-        case .authorizedWhenInUse, .authorizedAlways:
-            // Приблизне місцезнаходження не дає швидкості, потрібної калібруванню
-            return locationManager.accuracyAuthorization == .fullAccuracy ? .authorized : .reducedAccuracy
-        default:
-            return .denied
-        }
-    }
-
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        locationStatus = currentLocationAccess()
-        // Користувач відповів на системний запит: стартуємо (з GPS або без)
-        if startAfterAuthorization, locationStatus != .notDetermined {
-            startAfterAuthorization = false
-            startRecording()
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last, isRecording else { return }
-
-        // Перше оновлення може бути старою закешованою позицією: пропускаємо її
-        let time = sessionTime(of: location)
-        guard time > -1.0 else { return }
-
-        let speed = location.speed
-        // speed < 0 означає, що iOS не змогла визначити швидкість
-        if speed >= 0 {
-            lastKnownSpeed = speed
-            lastSpeedTime = time
-        }
-        // Координати з поганою точністю (вулиця між висотками) не пишемо і не малюємо
-        if location.horizontalAccuracy >= 0,
-           location.horizontalAccuracy <= VeloxConfig.routeMaxHorizontalAccuracy {
-            let point = RoutePoint(latitude: location.coordinate.latitude,
-                                   longitude: location.coordinate.longitude)
-            liveRoute.add(point, at: time)
-            if recordRoute {
-                lastCoordinate = point
-                lastCoordinateTime = time
-            }
-        }
-
-        guard isCalibrating else { return }
-        if let outcome = calibrator.feedLocation(speed: speed, speedAccuracy: location.speedAccuracy, time: time) {
-            apply(outcome)
-        }
-    }
-
     // MARK: - Час сесії
 
     // Поточний момент (для подій без власної мітки часу: сповіщення, кнопки)
-    private func sessionTime() -> TimeInterval {
+    func sessionTime() -> TimeInterval {
         ProcessInfo.processInfo.systemUptime - startUptime
-    }
-
-    // Момент, коли сенсор фактично зробив вимір (а не коли ми його обробили)
-    private func sessionTime(of motion: CMDeviceMotion) -> TimeInterval {
-        motion.timestamp - startUptime
-    }
-
-    // Момент визначення координат GPS
-    private func sessionTime(of location: CLLocation) -> TimeInterval {
-        location.timestamp.timeIntervalSince(startTime)
-    }
-
-    // MARK: - Життєвий цикл додатка (Anti-Fraud)
-
-    @objc private func appLostFocus() {
-        DispatchQueue.main.async { [weak self] in
-            self?.handleFocusLost()
-        }
-    }
-
-    // Штрафів немає лише під час першого калібрування поїздки (водій щойно
-    // натиснув «Старт»). Перекалібрування в русі не звільняє від штрафу.
-    private var distractionsPaused: Bool {
-        isCalibrating && !hasCalibrated
-    }
-
-    private func handleFocusLost() {
-        guard isRecording, !distractionsPaused, pendingFocusLoss == nil else { return }
-        // Екран вхідного дзвінка відкривається трохи раніше, ніж CallKit повідомляє
-        // про дзвінок, тому причину визначаємо з невеликою затримкою, а час
-        // відволікання беремо з моменту втрати активності
-        let now = sessionTime()
-        pendingFocusLoss = (now, CallPolicy.callWasActive(callStartedAt: callInProgress ? callStartedAt : nil,
-                                                         focusLostAt: now))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.resolvePendingFocusLoss()
-        }
-    }
-
-    // Викликається таймером або поверненням у застосунок, залежно від того, що раніше
-    private func resolvePendingFocusLoss() {
-        guard let pending = pendingFocusLoss else { return }
-        pendingFocusLoss = nil
-        guard isRecording else { return }
-
-        switch CallPolicy.cause(for: currentCallState, callWasActive: pending.callWasActive) {
-        case .incomingCall:
-            appendEventRow(event: "CallIncoming", time: pending.time)
-            // Дзвінок відкрито: CallEnd запишеться, коли дзвінків не залишиться
-            // (навіть якщо iOS призупинила застосунок на час розмови)
-            callInProgress = true
-            callStartedAt = pending.time
-            phoneState = .onCall
-        case .handsFreeCall:
-            updateCallState()
-        case .distraction:
-            beginDistraction(at: pending.time)
-        }
-    }
-
-    private func beginDistraction(at time: TimeInterval) {
-        switch distractionTracker.begin(at: time) {
-        case .counted:
-            distractionCount += 1
-            phoneState = .distracted
-            liveRoute.addEvent(.distraction, at: time, maxAge: Self.speedMaxAge)
-            // Пишемо подію в CSV одразу, а не чекаємо наступного виміру
-            appendEventRow(event: "Distraction", time: time)
-            triggerHapticFeedback(style: .error)
-        case .resumed:
-            phoneState = .distracted
-            appendEventRow(event: "DistractionResume", time: time)
-        case .ignored, .alreadyActive:
-            break
-        }
-    }
-
-    // Водій повернувся: фіксуємо тривалість і штраф за неї (у рядку
-    // DistractionEnd колонка Score вже враховує цей штраф)
-    private func endDistraction(at time: TimeInterval, stopOnError: Bool = true) {
-        guard distractionTracker.end(at: time) != nil else { return }
-        handheldCallEpisode = false
-        distractionSeconds = distractionTracker.totalDuration
-        distractionDurationPenalty = distractionTracker.durationPenalty
-        appendRow(event: "DistractionEnd", time: time, isSample: false, stopOnError: stopOnError)
-    }
-
-    @objc private func appEnteredBackground() {
-        guard isRecording else { return }
-        if let error = csvWriter.flush() {
-            stopRecording(reason: error)
-        }
-    }
-
-    @objc private func appGainedFocus() {
-        DispatchQueue.main.async { [weak self] in
-            self?.handleFocusGained()
-        }
-    }
-
-    private func handleFocusGained() {
-        guard isRecording else { return }
-        resolvePendingFocusLoss()
-        // Відволікання через розмову біля вуха закінчується разом із розмовою
-        if !handheldCallEpisode {
-            endDistraction(at: sessionTime())
-        }
-        updateCallState()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            guard let self = self, self.isRecording, !self.distractionTracker.isActive else { return }
-            if self.isCalibrating || self.calibration == nil {
-                self.phoneState = .calibrating
-            } else {
-                self.phoneState = self.callInProgress ? .onCall : .recording
-            }
-        }
-    }
-
-    // MARK: - Дзвінки (CallKit)
-
-    // Звук розмови йде в динамік біля вуха: телефон у руці
-    private var isReceiverRoute: Bool {
-        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .builtInReceiver }
-    }
-
-    private var currentCallState: CallState {
-        let calls = callObserver.calls.filter { !$0.hasEnded }
-        guard !calls.isEmpty else { return .none }
-        if calls.contains(where: { $0.hasConnected || $0.isOutgoing }) {
-            return .active(handheld: isReceiverRoute)
-        }
-        return .incomingRinging
-    }
-
-    // Делегат викликається в головній черзі (див. init)
-    func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
-        updateCallState()
-    }
-
-    // Звіряє стан дзвінка із записаним: початок і кінець розмови, телефон біля вуха
-    private func updateCallState() {
-        guard isRecording else {
-            callInProgress = false
-            callStartedAt = nil
-            return
-        }
-        let now = sessionTime()
-        switch currentCallState {
-        case .none, .incomingRinging:
-            guard callInProgress else { return }
-            callInProgress = false
-            callStartedAt = nil
-            if handheldCallEpisode {
-                endDistraction(at: now)
-            }
-            appendEventRow(event: "CallEnd", time: now)
-            if phoneState == .onCall {
-                phoneState = .recording
-            }
-        case .active(let handheld):
-            if !callInProgress {
-                callInProgress = true
-                callStartedAt = now
-                appendEventRow(event: handheld ? "CallStart_Handheld" : "CallStart", time: now)
-                if phoneState != .distracted, !isCalibrating {
-                    phoneState = .onCall
-                }
-            }
-            // Розмова з телефоном біля вуха - відволікання (поки звук не перемкнули
-            // на гучний звʼязок чи гарнітуру)
-            if handheld, !distractionTracker.isActive, !distractionsPaused {
-                beginDistraction(at: now)
-                handheldCallEpisode = distractionTracker.isActive
-            } else if !handheld, handheldCallEpisode {
-                endDistraction(at: now)
-                if phoneState == .distracted {
-                    phoneState = .onCall
-                }
-            }
-        }
-    }
-
-    // MARK: - Керування записом
-
-    // Кнопка «Старт»: спершу з'ясовуємо доступ до геолокації
-    func requestStart() {
-        guard !isRecording else { return }
-        // Без сенсорів руху питати про геолокацію немає сенсу: startRecording покаже помилку
-        guard motionManager.isDeviceMotionAvailable else {
-            startRecording()
-            return
-        }
-        locationStatus = currentLocationAccess()
-        switch locationStatus {
-        case .authorized:
-            startRecording()
-        case .notDetermined:
-            showLocationPrompt = true
-        case .denied, .reducedAccuracy:
-            if userAcceptedFallback {
-                startRecording()
-            } else {
-                showLocationDeniedPrompt = true
-            }
-        }
-    }
-
-    // «Дозволити» в поясненні: системний запит, після відповіді запис стартує сам
-    func allowLocationAndStart() {
-        startAfterAuthorization = true
-        locationManager.requestWhenInUseAuthorization()
-    }
-
-    // «Без геолокації»: спрощене калібрування (телефон екраном вгору, верхом вперед)
-    func startWithoutLocation() {
-        userAcceptedFallback = true
-        startRecording()
-    }
-
-    func openSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
-    }
-
-    var locationDeniedMessage: String {
-        if locationStatus == .reducedAccuracy {
-            return "Увімкнено лише приблизне місцезнаходження, а калібруванню потрібна точна швидкість. Увімкніть: Налаштування → Velox → Геолокація → «Точне місцезнаходження». Без цього телефон треба класти екраном вгору, верхньою частиною вперед."
-        }
-        return "Доступ до геолокації заборонено. Без неї калібрування спрощене: телефон треба класти екраном вгору, верхньою частиною вперед. Дозволити доступ можна в Налаштуваннях."
-    }
-
-    func startRecording() {
-        guard !isRecording else { return }
-
-        guard motionManager.isDeviceMotionAvailable else {
-            showMessage("Акселерометр недоступний. Перевірте дозволи та запускайте застосунок на фізичному iPhone (у симуляторі сенсорів немає).")
-            return
-        }
-
-        // Спершу очищаємо дані і створюємо файл, потім вмикаємо сесію
-        resetData()
-        liveRoute = LiveRoute()
-
-        let now = Date()
-        recordRoute = AppSettings.saveRouteEnabled && locationAuthorized
-        lastCoordinate = nil
-        lastCoordinateTime = -.infinity
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        // На початку файлу - параметри алгоритмів, версія застосунку і пристрій
-        if let error = csvWriter.open(fileName: "Velox_Data_\(formatter.string(from: now)).csv",
-                                      metadata: TripMetadata.recording(startedAt: now, route: recordRoute)) {
-            showMessage(error)
-            return
-        }
-
-        isRecording = true
-        // Телефон у тримачі ніхто не торкається: без цього iOS погасить екран,
-        // застосунок втратить активність (штраф) і перестане отримувати дані
-        UIApplication.shared.isIdleTimerDisabled = true
-
-        startTime = Date()
-        startUptime = ProcessInfo.processInfo.systemUptime
-        maneuverDetector.reset()
-        orientationDetector.reset()
-        calibration = nil
-        hasCalibrated = false
-        yawEstimator = nil
-        retryCalibrationAt = nil
-        pendingFocusLoss = nil
-        callInProgress = false
-        callStartedAt = nil
-        lastRawLongitudinal = 0.0
-        lastUserAcceleration = Vector3.zero
-        lastRotationRate = Vector3.zero
-        lastKnownSpeed = 0.0
-        lastSpeedTime = -.infinity
-
-        if locationAuthorized {
-            locationManager.startUpdatingLocation()
-        }
-
-        // Кожен запис починається з калібрування
-        beginCalibration(event: "CalibrationStart")
-
-        motionManager.deviceMotionUpdateInterval = VeloxConfig.sampleInterval
-        motionManager.startDeviceMotionUpdates(to: .main) { [weak self] (motion, error) in
-            guard let self = self else { return }
-            if let error = error {
-                self.handleMotionError(error)
-                return
-            }
-            guard let motion = motion else { return }
-            self.processMotionData(motion)
-        }
-    }
-
-    func stopRecording(reason: String? = nil) {
-        guard isRecording else { return }
-        // Відволікання, що ще триває, закривається моментом зупинки
-        let stopTime = sessionTime()
-        pendingFocusLoss = nil
-        endDistraction(at: stopTime, stopOnError: false)
-        if callInProgress {
-            appendRow(event: "CallEnd", time: stopTime, isSample: false, stopOnError: false)
-            callInProgress = false
-            callStartedAt = nil
-        }
-        retryCalibrationAt = nil
-        isRecording = false
-        isCalibrating = false
-        calibration = nil
-        calibrationProgress = 0.0
-        calibrationInfo = ""
-        phoneState = .idle
-        motionManager.stopDeviceMotionUpdates()
-        locationManager.stopUpdatingLocation()
-        UIApplication.shared.isIdleTimerDisabled = false
-
-        let result = csvWriter.finish()
-        switch result {
-        case .saved(let fileName, let warning):
-            // Підсумок (оцінка, події, файл) показує екран поїздки, тож окреме
-            // повідомлення потрібне лише для причини зупинки чи помилки запису
-            let notice = [reason, warning].compactMap { $0 }.joined(separator: "\n")
-            finishedTrip = FinishedTrip(fileName: fileName, notice: notice.isEmpty ? nil : notice)
-        case .empty, .notCreated:
-            showMessage([reason, result.message].compactMap { $0 }.joined(separator: "\n"))
-        }
-    }
-
-    /// Запасний варіант, якщо збережений файл не вдалося відкрити в історії
-    func showSavedTripMessage(_ trip: FinishedTrip) {
-        let summary = "Safety Score: \(safetyScore) (\(SafetyClass.classify(safetyScore).label))\n"
-            + "Маневри: \(hardBrakingCount + hardAccelerationCount), відволікання: \(distractionCount)"
-        showMessage([trip.notice, summary, "Дані поїздки збережено: \(trip.fileName)"]
-            .compactMap { $0 }
-            .joined(separator: "\n"))
-    }
-
-    // Ручне перекалібрування (кнопка в інтерфейсі). Дозволене лише коли авто
-    // практично стоїть - див. canManuallyRecalibrate.
-    func recalibrate() {
-        guard isRecording, !isCalibrating, canManuallyRecalibrate else { return }
-        triggerHapticFeedback(style: .warning)
-        beginCalibration(event: "CalibrationStart")
-    }
-
-    // Кнопку варто вимикати під час руху: перекалібрування вимагає їхати
-    // (фаза GPS), а взаємодія з телефоном на ходу суперечить самій меті
-    // застосунку. Автоматичне перекалібрування працює без цього.
-    // Файл поточного запису: історія поїздок його не показує, бо він ще не завершений
-    var currentTripFileName: String? {
-        isRecording ? csvWriter.fileName : nil
-    }
-
-    var canManuallyRecalibrate: Bool {
-        lastKnownSpeed < Self.manualRecalibrationMaxSpeed
-    }
-
-    // Скидання лічильників; файл поїздки під час запису не зачіпається
-    func resetData() {
-        hardBrakingCount = 0
-        hardAccelerationCount = 0
-        distractionCount = 0
-        liveRoute.clearEvents()
-        distractionTracker.reset()
-        handheldCallEpisode = false
-        distractionSeconds = 0
-        distractionDurationPenalty = 0
-        filter.reset()
-        currentGForceY = 0.0
-
-        if !isRecording {
-            phoneState = .idle
-        }
-    }
-
-    // MARK: - Калібрування
-
-    // MARK: - Енергоспоживання GPS
-
-    // Режим BestForNavigation (максимальна точність і злиття з іншими сенсорами)
-    // потрібен лише для калібрування напряму руху. Під час запису швидкість
-    // потрібна для колонки Speed_mps і блокування ручного перекалібрування в русі;
-    // для цього вистачає NearestTenMeters, що витрачає помітно менше енергії.
-    private func setLocationPrecision(forCalibration: Bool) {
-        locationManager.desiredAccuracy = forCalibration
-            ? kCLLocationAccuracyBestForNavigation
-            : kCLLocationAccuracyNearestTenMeters
-    }
-
-    // Швидкість для CSV: nil, якщо GPS давно мовчить (порожнє значення в колонці
-    // краще за застаріле: analyzer.py пропускає порожні значення)
-    private var freshSpeed: Double? {
-        sessionTime() - lastSpeedTime <= Self.speedMaxAge ? lastKnownSpeed : nil
-    }
-
-    // Те саме для координат маршруту
-    private var freshCoordinate: RoutePoint? {
-        guard recordRoute, sessionTime() - lastCoordinateTime <= Self.speedMaxAge else { return nil }
-        return lastCoordinate
-    }
-
-    private func beginCalibration(event: String) {
-        setLocationPrecision(forCalibration: true)
-        // Перекалібрування під час поїздки: авто може їхати, вимоги до спокою мʼякші
-        calibrator.reset(locationAvailable: locationAuthorized, inMotion: hasCalibrated)
-        retryCalibrationAt = nil
-        forwardPhaseLogged = false
-        isCalibrating = true
-        calibrationProgress = 0.0
-        orientationDetector.resetTimer()
-        phoneState = .calibrating
-        calibrationInfo = "Тримайте телефон нерухомо"
-        appendEventRow(event: event)
-    }
-
-    private func apply(_ outcome: CalibrationOutcome) {
-        switch outcome {
-        case .calibratingUp(let progress):
-            calibrationProgress = progress
-            calibrationInfo = "Тримайте телефон нерухомо"
-        case .calibratingForward(let progress):
-            calibrationProgress = progress
-            calibrationInfo = "Проїдьте прямо, плавно прискорюючись і гальмуючи"
-            if !forwardPhaseLogged {
-                forwardPhaseLogged = true
-                appendEventRow(event: "CalibrationForwardStart")
-            }
-        case .finished(let result):
-            finishCalibration(result)
-        case .failed(let message):
-            isCalibrating = false
-            guard hasCalibrated else {
-                // На старті водій поруч із телефоном і може виправити причину сам
-                stopRecording(reason: "Калібрування не вдалося: " + message)
-                return
-            }
-            // Перекалібрування в русі: поїздку не зупиняємо, а пробуємо ще раз.
-            // Поки калібрування немає, виміри не пишуться, але відволікання рахуються.
-            calibration = nil
-            calibrationProgress = 0.0
-            let delay = Int(VeloxConfig.recalibrationRetryDelay)
-            calibrationInfo = "Повторне калібрування через \(delay) с. \(message)"
-            phoneState = .calibrating
-            appendEventRow(event: "CalibrationFailed")
-            retryCalibrationAt = sessionTime() + VeloxConfig.recalibrationRetryDelay
-        }
-    }
-
-    private func finishCalibration(_ result: CalibrationResult) {
-        setLocationPrecision(forCalibration: false)
-        calibration = result
-        hasCalibrated = true
-        isCalibrating = false
-        calibrationProgress = 1.0
-        // Осі змінились, тому фільтр починає з нуля
-        filter.reset()
-        currentGForceY = 0.0
-        orientationDetector.reset()
-        phoneState = .recording
-
-        switch result.forwardSource {
-        case .gps:
-            let percent = Int((result.forwardQuality * 100).rounded())
-            calibrationInfo = "Калібрування завершено (GPS), якість \(percent)%"
-            appendEventRow(event: "CalibrationDone")
-        case .fallbackFlatMount, .yawCorrelation:
-            calibrationInfo = "Калібрування без GPS: напрям руху уточниться на перших поворотах"
-            appendEventRow(event: "CalibrationDoneFallback")
-        }
-
-        // Без GPS напрям руху - лише припущення про кріплення: перевіряємо його
-        // за поворотами під час поїздки
-        if result.forwardSource == .gps {
-            yawEstimator = nil
-        } else {
-            yawEstimator = YawForwardEstimator(up: result.up)
-            nextYawCheckEnergy = YawForwardEstimator.requiredEnergy
-            yawDirectionChecked = false
-        }
-
-        triggerHapticFeedback(style: .success)
-    }
-
-    /// Порівнює напрям руху, знайдений за поворотами, з поточним і за потреби
-    /// виправляє калібрування. Перевірка повторюється щоразу, коли поворотів
-    /// стає вдвічі більше, тож оцінка з часом лише уточнюється.
-    private func checkYawEstimate(time: TimeInterval) {
-        guard let estimator = yawEstimator, let current = calibration,
-              estimator.energy >= nextYawCheckEnergy,
-              let forward = estimator.estimate else { return }
-        nextYawCheckEnergy = estimator.energy * 2
-
-        let angle = OrientationCalibrator.angleDegrees(forward, current.forward)
-        if angle > Self.yawCorrectionAngle {
-            calibration = CalibrationResult(up: current.up, forward: forward,
-                                            forwardSource: .yawCorrelation,
-                                            forwardQuality: estimator.consistency)
-            // Нова вісь: фільтр і паузи маневрів починають з нуля
-            filter.reset()
-            currentGForceY = 0.0
-            maneuverDetector.reset()
-            calibrationInfo = "Напрям руху виправлено за поворотами (на \(Int(angle.rounded()))°)"
-            appendEventRow(event: "CalibrationDirectionFix", time: time)
-        } else if !yawDirectionChecked {
-            calibrationInfo = "Напрям руху підтверджено за поворотами"
-            appendEventRow(event: "CalibrationDirectionConfirmed", time: time)
-        }
-        yawDirectionChecked = true
-    }
-
-    // MARK: - Обробка даних
-
-    private func handleMotionError(_ error: Error) {
-        guard isRecording else { return }
-        stopRecording(reason: "Втрачено зв'язок із сенсором: \(error.localizedDescription)")
-    }
-
-    private func vector(_ a: CMAcceleration) -> Vector3 {
-        Vector3(x: a.x, y: a.y, z: a.z)
-    }
-
-    private func vector(_ r: CMRotationRate) -> Vector3 {
-        Vector3(x: r.x, y: r.y, z: r.z)
-    }
-
-    private func processMotionData(_ motion: CMDeviceMotion) {
-        // Захист від запізнілого виклику після зупинки запису
-        guard isRecording else { return }
-
-        let gravity = vector(motion.gravity)
-        let userAcceleration = vector(motion.userAcceleration)
-        let time = sessionTime(of: motion)
-
-        if isCalibrating {
-            let outcome = calibrator.feedMotion(gravity: gravity,
-                                                userAcceleration: userAcceleration,
-                                                rotationRate: vector(motion.rotationRate),
-                                                time: time)
-            apply(outcome)
-            return
-        }
-
-        guard let calibration = calibration else {
-            // Невдале перекалібрування: чекаємо паузу і пробуємо знову
-            if let retryAt = retryCalibrationAt, time >= retryAt {
-                beginCalibration(event: "CalibrationStart_Retry")
-            }
-            return
-        }
-
-        // Кардинальна зміна положення телефона: калібруємо заново
-        if orientationDetector.update(gravity: gravity, calibratedUp: calibration.up, time: time) {
-            triggerHapticFeedback(style: .warning)
-            beginCalibration(event: "CalibrationStart_Auto")
-            return
-        }
-
-        // Без GPS: перевірка напряму руху за поворотами (може замінити калібрування)
-        if let estimator = yawEstimator {
-            estimator.addSample(userAcceleration: userAcceleration, rotationRate: vector(motion.rotationRate))
-            checkYawEstimate(time: time)
-        }
-        let activeCalibration = self.calibration ?? calibration
-
-        // Поздовжнє прискорення в осях автомобіля, далі Low-Pass фільтр
-        let raw = activeCalibration.longitudinal(userAcceleration)
-        lastRawLongitudinal = raw
-        lastUserAcceleration = userAcceleration
-        lastRotationRate = vector(motion.rotationRate)
-        currentGForceY = filter.process(raw)
-
-        var event = ""
-        if let maneuver = maneuverDetector.detect(filtered: currentGForceY, at: time) {
-            switch maneuver {
-            case .hardBraking:
-                hardBrakingCount += 1
-                liveRoute.addEvent(.hardBraking, at: time, maxAge: Self.speedMaxAge)
-            case .hardAcceleration:
-                hardAccelerationCount += 1
-                liveRoute.addEvent(.hardAcceleration, at: time, maxAge: Self.speedMaxAge)
-            }
-            triggerHapticFeedback(style: .error)
-            event = maneuver.eventCode
-        }
-        appendRow(event: event, time: time, isSample: true)
-    }
-
-    // MARK: - Рядки CSV
-
-    // Рядок лише з подією (Distraction, Calibration...): повторює останні значення
-    private func appendEventRow(event: String, time: TimeInterval? = nil) {
-        appendRow(event: event, time: time ?? sessionTime(), isSample: false)
-    }
-
-    /// stopOnError = false - під час зупинки: помилку запису покаже finish()
-    private func appendRow(event: String, time: TimeInterval, isSample: Bool, stopOnError: Bool = true) {
-        let row = TelemetryRow(time: time,
-                               filtered: currentGForceY,
-                               state: phoneState.title,
-                               event: event,
-                               raw: lastRawLongitudinal,
-                               userAcceleration: lastUserAcceleration,
-                               rotationRate: lastRotationRate,
-                               tiltDegrees: orientationDetector.lastAngle,
-                               score: safetyScore,
-                               speed: freshSpeed,
-                               coordinate: freshCoordinate)
-        if let error = csvWriter.append(row, isSample: isSample), stopOnError {
-            stopRecording(reason: error)
-        }
     }
 
     // MARK: - Повідомлення
 
-    private func triggerHapticFeedback(style: UINotificationFeedbackGenerator.FeedbackType) {
+    func triggerHapticFeedback(style: UINotificationFeedbackGenerator.FeedbackType) {
         // Вібрацію можна вимкнути в Налаштуваннях
         guard AppSettings.hapticsEnabled else { return }
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(style)
     }
 
-    private func showMessage(_ text: String) {
+    func showMessage(_ text: String) {
         alertMessage = text
         showAlert = true
     }

@@ -43,9 +43,10 @@ def shade_calibration(ax, windows):
         ax.axvspan(start, end, color="gray", alpha=0.18, label="Калібрування")
 
 
-def save(fig, out_dir, file_name):
+def save(fig, out_dir, file_name, crop=False):
+    """crop=True обрізає порожні поля (графік з фіксованими пропорціями осей, як маршрут)."""
     fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, file_name), dpi=DPI)
+    fig.savefig(os.path.join(out_dir, file_name), dpi=DPI, bbox_inches="tight" if crop else None)
     return fig
 
 
