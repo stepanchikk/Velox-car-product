@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		FD20040F30548A4200C62B37 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = FD20040E30548A4200C62B37 /* README.md */; };
+		FD99CDCB307D6163002F6729 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FD99CDCA307D6162002F6729 /* WidgetKit.framework */; };
+		FD99CDCD307D6163002F6729 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FD99CDCC307D6163002F6729 /* SwiftUI.framework */; };
+		FD99CDDA307D6163002F6729 /* VeloxWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FD99CDC8307D6162002F6729 /* VeloxWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -18,11 +21,35 @@
 			remoteGlobalIDString = FD9DAC7F305349500025AF32;
 			remoteInfo = "Velox-car product";
 		};
+		FD99CDD8307D6163002F6729 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FD9DAC78305349500025AF32 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FD99CDC7307D6162002F6729;
+			remoteInfo = VeloxWidgetsExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		FD99CDDF307D6163002F6729 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FD99CDDA307D6163002F6729 /* VeloxWidgetsExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		FD20040E30548A4200C62B37 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		FD7E27E1307700F900304D46 /* Velox-car productTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Velox-car productTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		FD99CDC8307D6162002F6729 /* VeloxWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VeloxWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		FD99CDCA307D6162002F6729 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		FD99CDCC307D6163002F6729 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		FD9DAC80305349500025AF32 /* Velox-car product.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Velox-car product.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FDFBC130307D111600E2EB3C /* test_core.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = test_core.py; sourceTree = "<group>"; };
 		FDFBC132307D111600E2EB3C /* __init__.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = __init__.py; sourceTree = "<group>"; };
@@ -44,14 +71,42 @@
 		FDFBC144307D111600E2EB3C /* analyzer.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = analyzer.py; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		FD99CDDB307D6163002F6729 /* Exceptions for "VeloxWidgets" folder in "VeloxWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = FD99CDC7307D6162002F6729 /* VeloxWidgetsExtension */;
+		};
+		FD99CDE9307D62B3002F6729 /* Exceptions for "Velox-car product" folder in "VeloxWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				VeloxTripAttributes.swift,
+			);
+			target = FD99CDC7307D6162002F6729 /* VeloxWidgetsExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		FD7E27E2307700F900304D46 /* Velox-car productTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "Velox-car productTests";
 			sourceTree = "<group>";
 		};
+		FD99CDCE307D6163002F6729 /* VeloxWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FD99CDDB307D6163002F6729 /* Exceptions for "VeloxWidgets" folder in "VeloxWidgetsExtension" target */,
+			);
+			path = VeloxWidgets;
+			sourceTree = "<group>";
+		};
 		FD9DAC82305349500025AF32 /* Velox-car product */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FD99CDE9307D62B3002F6729 /* Exceptions for "Velox-car product" folder in "VeloxWidgetsExtension" target */,
+			);
 			path = "Velox-car product";
 			sourceTree = "<group>";
 		};
@@ -65,6 +120,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FD99CDC5307D6162002F6729 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FD99CDCD307D6163002F6729 /* SwiftUI.framework in Frameworks */,
+				FD99CDCB307D6163002F6729 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FD9DAC7D305349500025AF32 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -75,6 +139,15 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		FD99CDC9307D6162002F6729 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				FD99CDCA307D6162002F6729 /* WidgetKit.framework */,
+				FD99CDCC307D6163002F6729 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		FD9DAC77305349500025AF32 = {
 			isa = PBXGroup;
 			children = (
@@ -82,6 +155,8 @@
 				FD20040E30548A4200C62B37 /* README.md */,
 				FD9DAC82305349500025AF32 /* Velox-car product */,
 				FD7E27E2307700F900304D46 /* Velox-car productTests */,
+				FD99CDCE307D6163002F6729 /* VeloxWidgets */,
+				FD99CDC9307D6162002F6729 /* Frameworks */,
 				FD9DAC81305349500025AF32 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -91,6 +166,7 @@
 			children = (
 				FD9DAC80305349500025AF32 /* Velox-car product.app */,
 				FD7E27E1307700F900304D46 /* Velox-car productTests.xctest */,
+				FD99CDC8307D6162002F6729 /* VeloxWidgetsExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -170,6 +246,28 @@
 			productReference = FD7E27E1307700F900304D46 /* Velox-car productTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		FD99CDC7307D6162002F6729 /* VeloxWidgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FD99CDDC307D6163002F6729 /* Build configuration list for PBXNativeTarget "VeloxWidgetsExtension" */;
+			buildPhases = (
+				FD99CDC4307D6162002F6729 /* Sources */,
+				FD99CDC5307D6162002F6729 /* Frameworks */,
+				FD99CDC6307D6162002F6729 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				FD99CDCE307D6163002F6729 /* VeloxWidgets */,
+			);
+			name = VeloxWidgetsExtension;
+			packageProductDependencies = (
+			);
+			productName = VeloxWidgetsExtension;
+			productReference = FD99CDC8307D6162002F6729 /* VeloxWidgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		FD9DAC7F305349500025AF32 /* Velox-car product */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = FD9DAC8B305349520025AF32 /* Build configuration list for PBXNativeTarget "Velox-car product" */;
@@ -177,10 +275,12 @@
 				FD9DAC7C305349500025AF32 /* Sources */,
 				FD9DAC7D305349500025AF32 /* Frameworks */,
 				FD9DAC7E305349500025AF32 /* Resources */,
+				FD99CDDF307D6163002F6729 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				FD99CDD9307D6163002F6729 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				FD9DAC82305349500025AF32 /* Velox-car product */,
@@ -206,6 +306,10 @@
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = FD9DAC7F305349500025AF32;
 					};
+					FD99CDC7307D6162002F6729 = {
+						CreatedOnToolsVersion = 27.0;
+						LastSwiftMigration = 2700;
+					};
 					FD9DAC7F305349500025AF32 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -227,12 +331,20 @@
 			targets = (
 				FD9DAC7F305349500025AF32 /* Velox-car product */,
 				FD7E27E0307700F900304D46 /* Velox-car productTests */,
+				FD99CDC7307D6162002F6729 /* VeloxWidgetsExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		FD7E27DF307700F900304D46 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FD99CDC6307D6162002F6729 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -257,6 +369,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FD99CDC4307D6162002F6729 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FD9DAC7C305349500025AF32 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -271,6 +390,11 @@
 			isa = PBXTargetDependency;
 			target = FD9DAC7F305349500025AF32 /* Velox-car product */;
 			targetProxy = FD7E27E5307700F900304D46 /* PBXContainerItemProxy */;
+		};
+		FD99CDD9307D6163002F6729 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FD99CDC7307D6162002F6729 /* VeloxWidgetsExtension */;
+			targetProxy = FD99CDD8307D6163002F6729 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -324,6 +448,71 @@
 				TARGETED_DEVICE_FAMILY = "1,2,7";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Velox-car product.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Velox-car product";
 				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Release;
+		};
+		FD99CDDD307D6163002F6729 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KPLB4FZ4QQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VeloxWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = VeloxWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.stepanshudrovsky.Velox-car-product.VeloxWidgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FD99CDDE307D6163002F6729 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KPLB4FZ4QQ;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VeloxWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = VeloxWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.stepanshudrovsky.Velox-car-product.VeloxWidgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -464,6 +653,7 @@
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Додаток використовує GPS для визначення швидкості автомобіля та побудови теплової карти вашого маршруту";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Додаток використовує датчики руху для аналізу плавності вашого водіння та розрахунку еко-балів.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -501,6 +691,7 @@
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Додаток використовує GPS для визначення швидкості автомобіля та побудови теплової карти вашого маршруту";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Додаток використовує датчики руху для аналізу плавності вашого водіння та розрахунку еко-балів.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -532,6 +723,15 @@
 			buildConfigurations = (
 				FD7E27E8307700F900304D46 /* Debug */,
 				FD7E27E9307700F900304D46 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FD99CDDC307D6163002F6729 /* Build configuration list for PBXNativeTarget "VeloxWidgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FD99CDDD307D6163002F6729 /* Debug */,
+				FD99CDDE307D6163002F6729 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

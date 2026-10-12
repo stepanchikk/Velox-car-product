@@ -225,6 +225,108 @@ nonisolated enum CallPolicy {
     }
 }
 
+// MARK: - Запис із вимкненим екраном
+
+/// Що зробити SensorManager за рішенням ScreenLockTracker
+nonisolated enum ScreenAction: Equatable {
+    case screenLocked(at: TimeInterval)       // записати ScreenLocked, стан «Екран вимкнено»
+    case screenUnlocked(at: TimeInterval)     // записати ScreenUnlocked
+    case beginDistraction(at: TimeInterval)   // відволікання з цього моменту
+    case endDistraction(at: TimeInterval)     // закрити відволікання, якщо воно триває
+}
+
+/// Розрізняє блокування екрана і користування телефоном, коли запис іде у фоні.
+///
+/// Застосунок втрачає активність і тоді, коли водій блокує екран, і тоді, коли
+/// відкриває інший застосунок. Відрізнити їх можна лише за сповіщенням iOS про
+/// блокування (protectedDataWillBecomeUnavailable), яке приходить із затримкою
+/// до ~10 с. Тому рішення відкладається на lockWaitTime:
+/// - прийшло блокування - це не відволікання, запис триває у фоні;
+/// - водій повернувся або час минув - відволікання з моменту втрати активності.
+/// Розблокування, після якого Velox не повернувся на екран за unlockGrace, -
+/// відволікання: телефон розблокували заради іншого застосунку.
+///
+/// Тип не залежить від UIKit: події передає SensorManager, тому всі сценарії
+/// перевіряються юніт-тестами.
+nonisolated struct ScreenLockTracker {
+    let lockWaitTime: TimeInterval
+    let unlockGrace: TimeInterval
+
+    private(set) var isLocked = false
+    private var appActive = true
+    // Втрата активності, для якої ще чекаємо сповіщення про блокування
+    private var pendingFocusLoss: TimeInterval?
+    // Розблокування, після якого чекаємо повернення у Velox
+    private var pendingUnlock: TimeInterval?
+
+    init(lockWaitTime: TimeInterval = VeloxConfig.screenLockWaitTime,
+         unlockGrace: TimeInterval = VeloxConfig.unlockReturnGrace) {
+        self.lockWaitTime = lockWaitTime
+        self.unlockGrace = unlockGrace
+    }
+
+    mutating func reset() {
+        isLocked = false
+        appActive = true
+        pendingFocusLoss = nil
+        pendingUnlock = nil
+    }
+
+    /// Застосунок втратив активність не через дзвінок
+    mutating func focusLost(at time: TimeInterval) -> [ScreenAction] {
+        appActive = false
+        // Сповіщення про блокування вже прийшло: причина відома
+        guard !isLocked, pendingFocusLoss == nil else { return [] }
+        pendingFocusLoss = time
+        return []
+    }
+
+    /// Velox знову на екрані
+    mutating func focusGained(at time: TimeInterval) -> [ScreenAction] {
+        appActive = true
+        pendingUnlock = nil
+        guard let lostAt = pendingFocusLoss else { return [] }
+        // Повернувся раніше, ніж прийшло блокування: виходив в інший застосунок
+        pendingFocusLoss = nil
+        return [.beginDistraction(at: lostAt), .endDistraction(at: time)]
+    }
+
+    /// iOS повідомила, що телефон заблоковано
+    mutating func deviceLocked(at time: TimeInterval) -> [ScreenAction] {
+        isLocked = true
+        pendingUnlock = nil
+        if let lostAt = pendingFocusLoss {
+            // Блокування пояснює втрату активності
+            pendingFocusLoss = nil
+            return [.screenLocked(at: lostAt)]
+        }
+        // Телефон відклали після користування іншим застосунком
+        return [.screenLocked(at: time), .endDistraction(at: time)]
+    }
+
+    /// iOS повідомила, що телефон розблоковано
+    mutating func deviceUnlocked(at time: TimeInterval) -> [ScreenAction] {
+        isLocked = false
+        if !appActive {
+            pendingUnlock = time
+        }
+        return [.screenUnlocked(at: time)]
+    }
+
+    /// Викликається з кожним виміром: приймає відкладені рішення
+    mutating func tick(at time: TimeInterval) -> [ScreenAction] {
+        if let lostAt = pendingFocusLoss, time - lostAt >= lockWaitTime {
+            pendingFocusLoss = nil
+            return [.beginDistraction(at: lostAt)]
+        }
+        if let unlockedAt = pendingUnlock, time - unlockedAt >= unlockGrace {
+            pendingUnlock = nil
+            return [.beginDistraction(at: unlockedAt)]
+        }
+        return []
+    }
+}
+
 // MARK: - Зміна положення телефона
 
 /// Виявляє кардинальну зміну нахилу телефона відносно калібрування

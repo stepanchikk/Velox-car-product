@@ -25,6 +25,8 @@ nonisolated struct TripStats: Hashable, Sendable {
     // Сумарний час з телефоном у руках (від Distraction до DistractionEnd);
     // nil для файлів версій, які тривалість не записували
     var distractionSeconds: Double?
+    // Скільки часу запис ішов із заблокованим екраном (від ScreenLocked до ScreenUnlocked)
+    var screenOffSeconds: Double = 0
     // Останнє значення колонки Score; для файлів без неї - розрахунок за подіями
     var score: Int?
     // Відстань за швидкістю GPS; nil, якщо швидкості в файлі немає
@@ -76,6 +78,7 @@ nonisolated enum TripCSVParser {
         var brakings = 0, accelerations = 0, distractions = 0
         var distractionSeconds = 0.0
         var distractionOpenedAt: Double?
+        var screenLockedAt: Double?
         var hasDurationEvents = metadata["distractionDurationStep"] != nil
         var lastScore: Int?
         var distance = 0.0
@@ -109,6 +112,13 @@ nonisolated enum TripCSVParser {
                     distractionSeconds += max(0, time - openedAt)
                     distractionOpenedAt = nil
                 }
+            case "ScreenLocked":
+                if screenLockedAt == nil { screenLockedAt = time }
+            case "ScreenUnlocked":
+                if let lockedAt = screenLockedAt {
+                    stats.screenOffSeconds += max(0, time - lockedAt)
+                    screenLockedAt = nil
+                }
             case "CalibrationDone": stats.calibration = .gps
             case "CalibrationDoneFallback": stats.calibration = .fallback
             case "CalibrationDirectionFix", "CalibrationDirectionConfirmed":
@@ -118,7 +128,8 @@ nonisolated enum TripCSVParser {
 
             // Службові рядки (відволікання, калібрування, дзвінки) повторюють
             // останні значення і вимірами не є
-            if event.hasPrefix("Distraction") || event.hasPrefix("Calibration") || event.hasPrefix("Call") {
+            if event.hasPrefix("Distraction") || event.hasPrefix("Calibration") || event.hasPrefix("Call")
+                || event.hasPrefix("Screen") {
                 continue
             }
             stats.samples += 1
@@ -144,6 +155,10 @@ nonisolated enum TripCSVParser {
             stats.distractions = distractions
         }
         stats.distractionSeconds = hasDurationEvents ? distractionSeconds : nil
+        // Запис зупинили, не розблокувавши екран (наприклад, через помилку)
+        if let lockedAt = screenLockedAt {
+            stats.screenOffSeconds += max(0, stats.duration - lockedAt)
+        }
         if let lastScore = lastScore {
             stats.score = lastScore
         } else if iEvent != nil {

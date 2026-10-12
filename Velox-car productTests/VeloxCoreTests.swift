@@ -182,6 +182,72 @@ final class DistractionTrackerTests: XCTestCase {
     }
 }
 
+// MARK: - Запис із вимкненим екраном
+
+final class ScreenLockTrackerTests: XCTestCase {
+
+    private func tracker() -> ScreenLockTracker {
+        ScreenLockTracker(lockWaitTime: 15, unlockGrace: 2)
+    }
+
+    // Водій заблокував екран: сповіщення прийшло через 10 с, штрафу немає
+    func testLockIsNotDistraction() {
+        var t = tracker()
+        XCTAssertEqual(t.focusLost(at: 100), [])
+        XCTAssertEqual(t.tick(at: 105), [])
+        XCTAssertEqual(t.deviceLocked(at: 110), [.screenLocked(at: 100)])
+        XCTAssertTrue(t.isLocked)
+        XCTAssertEqual(t.tick(at: 200), [], "заблокований телефон не відволікає")
+    }
+
+    // Відкрив інший застосунок і не повернувся: відволікання з моменту виходу
+    func testOtherAppAfterWaitIsDistraction() {
+        var t = tracker()
+        _ = t.focusLost(at: 100)
+        XCTAssertEqual(t.tick(at: 114.9), [])
+        XCTAssertEqual(t.tick(at: 115), [.beginDistraction(at: 100)])
+        XCTAssertEqual(t.tick(at: 130), [], "рішення приймається один раз")
+        // Потім відклав телефон: відволікання закінчилось
+        XCTAssertEqual(t.deviceLocked(at: 140), [.screenLocked(at: 140), .endDistraction(at: 140)])
+    }
+
+    // Швидко повернувся (наприклад, шторка сповіщень): відволікання, як і без фонового режиму
+    func testQuickReturnIsDistraction() {
+        var t = tracker()
+        _ = t.focusLost(at: 100)
+        XCTAssertEqual(t.focusGained(at: 104), [.beginDistraction(at: 100), .endDistraction(at: 104)])
+        XCTAssertEqual(t.tick(at: 200), [])
+    }
+
+    // Розблокував, і на екрані одразу Velox: штрафу немає
+    func testUnlockBackToVelox() {
+        var t = tracker()
+        _ = t.focusLost(at: 100)
+        _ = t.deviceLocked(at: 110)
+        XCTAssertEqual(t.deviceUnlocked(at: 300), [.screenUnlocked(at: 300)])
+        XCTAssertEqual(t.focusGained(at: 300.6), [])
+        XCTAssertEqual(t.tick(at: 310), [])
+    }
+
+    // Розблокував заради іншого застосунку: відволікання з моменту розблокування
+    func testUnlockIntoOtherApp() {
+        var t = tracker()
+        _ = t.focusLost(at: 100)
+        _ = t.deviceLocked(at: 110)
+        _ = t.deviceUnlocked(at: 300)
+        XCTAssertEqual(t.tick(at: 301), [])
+        XCTAssertEqual(t.tick(at: 302), [.beginDistraction(at: 300)])
+    }
+
+    // Сповіщення про блокування прийшло раніше, ніж класифіковано втрату активності
+    func testLockBeforeFocusLossIsClassified() {
+        var t = tracker()
+        XCTAssertEqual(t.deviceLocked(at: 100.2), [.screenLocked(at: 100.2), .endDistraction(at: 100.2)])
+        XCTAssertEqual(t.focusLost(at: 100), [], "причина вже відома")
+        XCTAssertEqual(t.tick(at: 130), [])
+    }
+}
+
 // MARK: - Зміна положення телефона
 
 final class OrientationChangeDetectorTests: XCTestCase {
@@ -375,6 +441,30 @@ final class TripMetadataTests: XCTestCase {
         XCTAssertTrue(metadata.changedParameters.isEmpty)
         metadata.set("maneuverThreshold", "0.35")
         XCTAssertEqual(metadata.changedParameters, ["maneuverThreshold"])
+    }
+
+    func testBackgroundFlagIsRecorded() {
+        XCTAssertEqual(TripMetadata.recording(startedAt: Date(), background: true)["background"], "on")
+        XCTAssertEqual(TripMetadata.recording(startedAt: Date())["background"], "off")
+    }
+
+    // Рядки блокування екрана - службові; час із вимкненим екраном рахується,
+    // навіть якщо рядок ScreenLocked записано пізніше за виміри (рішення відкладається)
+    func testScreenOffRows() throws {
+        let csv = """
+        Timestamp,Filtered_Y,State,Event,Score
+        0.0,0,Калібрування...,CalibrationStart,100
+        2.0,0,Запис іде,CalibrationDone,100
+        2.1,0,Запис іде,,100
+        12.0,0,Екран вимкнено,,100
+        2.5,0,Екран вимкнено,ScreenLocked,100
+        60.5,0,Екран вимкнено,ScreenUnlocked,100
+        61.0,0,Запис іде,,100
+        """
+        let stats = try XCTUnwrap(TripCSVParser.parse(csv))
+        XCTAssertEqual(stats.samples, 3)
+        XCTAssertEqual(stats.screenOffSeconds, 58.0, accuracy: 1e-9)
+        XCTAssertEqual(stats.score, 100)
     }
 
     func testOldFileHasNoMetadata() throws {

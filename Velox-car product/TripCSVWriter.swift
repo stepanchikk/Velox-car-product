@@ -113,6 +113,8 @@ nonisolated struct TripMetadata: Hashable, Sendable {
             ("distractionGracePeriod", VeloxConfig.distractionGracePeriod),
             ("distractionCooldown", VeloxConfig.distractionCooldown),
             ("callFocusLossGrace", VeloxConfig.callFocusLossGrace),
+            ("screenLockWaitTime", VeloxConfig.screenLockWaitTime),
+            ("unlockReturnGrace", VeloxConfig.unlockReturnGrace),
             ("distractionDurationStep", VeloxConfig.distractionDurationStep),
             ("distractionDurationPenalty", Double(VeloxConfig.distractionDurationPenalty)),
             ("distractionDurationPenaltyMax", Double(VeloxConfig.distractionDurationPenaltyMax)),
@@ -127,10 +129,12 @@ nonisolated struct TripMetadata: Hashable, Sendable {
     }
 
     /// Набір параметрів для нової поїздки; route - чи пишуться координати
-    static func recording(startedAt: Date, route: Bool = false) -> TripMetadata {
+    /// background - запис із вимкненим екраном (див. ScreenLockTracker)
+    static func recording(startedAt: Date, route: Bool = false, background: Bool = false) -> TripMetadata {
         var metadata = TripMetadata()
         metadata.set("format", formatVersion)
         metadata.set("route", route ? "on" : "off")
+        metadata.set("background", background ? "on" : "off")
         metadata.set("app", appVersion)
         metadata.set("device", deviceModel)
         metadata.set("os", osVersion)
