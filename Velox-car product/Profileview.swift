@@ -25,6 +25,12 @@ struct ProfileView: View {
                 .listRowInsets(EdgeInsets())
 
                 Section {
+                    JourneyCard(trips: tripStore.trips)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+
+                Section {
                     LabeledContent("Поїздок", value: "\(stats.tripCount)")
                     LabeledContent("Проїхано", value: TripFormat.distance(stats.totalDistanceMeters))
                     LabeledContent("За кермом", value: TripFormat.duration(stats.totalDuration))

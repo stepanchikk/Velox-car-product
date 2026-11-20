@@ -41,6 +41,12 @@ class Trip:
     segment_kind: dict             # номер калібрування -> "gps" | "fallback"
     route: Optional[pd.DataFrame]  # Timestamp, Lat, Lon, Event
 
+    maneuvers_enabled: Optional[np.ndarray] = None
+    penalty_total: Optional[float] = None
+    session_end: Optional[float] = None
+    processing_ms: Optional[np.ndarray] = None
+    sample_gaps: Optional[np.ndarray] = None
+
     # Результати перевірок (заповнює cli.analyze_trip)
     gps: Optional[object] = None
     yaw: Optional[object] = None
@@ -54,7 +60,7 @@ class Trip:
 
     @property
     def duration(self):
-        return float(self.t[-1] - self.t[0])
+        return float(self.session_end if self.session_end is not None else self.t[-1])
 
     def smoothed(self, alpha, app_alpha):
         """Сигнал після фільтра з коефіцієнтом alpha.

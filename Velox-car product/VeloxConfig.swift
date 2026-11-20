@@ -51,6 +51,11 @@ nonisolated enum VeloxConfig {
     // розблокували заради іншого застосунку, і це відволікання
     static let unlockReturnGrace: TimeInterval = 2.0
 
+    // Оцінювання уваги дозволене лише за свіжою достовірною швидкістю GPS.
+    static let movementMinSpeed: Double = 2.0
+    static let speedMaxAge: TimeInterval = 3.0
+    static let maxSpeedAccuracy: Double = 3.0
+
     // MARK: Safety Score
 
     // Штраф за кожен маневр і кожне відволікання, бали

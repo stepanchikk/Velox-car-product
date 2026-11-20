@@ -51,7 +51,7 @@ nonisolated struct DrivingStats: Equatable, Sendable {
     static func rating(_ trips: [TripSummary]) -> Int? {
         let scored = trips.filter { $0.stats.score != nil }
         guard !scored.isEmpty else { return nil }
-        let penalties = scored.map { Double(100 - ($0.stats.score ?? 100)) }.reduce(0, +)
+        let penalties = scored.map { Double($0.stats.totalPenalty ?? (100 - ($0.stats.score ?? 100))) }.reduce(0, +)
         let exposure = max(scored.map(exposureKm).reduce(0, +), VeloxConfig.ratingDistanceKm)
         let value = 100 - penalties / exposure * VeloxConfig.ratingDistanceKm
         return Int(max(0, value).rounded())
@@ -80,12 +80,13 @@ nonisolated enum AchievementCatalog {
     static func evaluate(_ trips: [TripSummary]) -> [Achievement] {
         let count = trips.count
         let distanceKm = trips.compactMap { $0.stats.distanceMeters }.reduce(0, +) / 1000
-        let smoothTrips = trips.filter { ($0.stats.score ?? 0) >= VeloxConfig.safeScoreMin }.count
-        let perfect = trips.contains {
-            $0.stats.score == 100 && $0.stats.duration >= minPerfectTripDuration
+        let eligible = trips.filter { Gamification.isEligible($0) }
+        let smoothTrips = eligible.filter { ($0.stats.score ?? 0) >= VeloxConfig.safeScoreMin }.count
+        let perfect = eligible.contains {
+            $0.stats.score == 100 && $0.stats.hasCompleteScoring && $0.stats.duration >= minPerfectTripDuration
         }
-        let focused = trips.contains {
-            $0.stats.distractions == 0 && $0.stats.duration >= minFocusedTripDuration
+        let focused = eligible.contains {
+            $0.stats.distractions == 0 && $0.stats.unknownMovementSamples == 0 && $0.stats.duration >= minFocusedTripDuration
         }
 
         return [
@@ -145,5 +146,106 @@ nonisolated enum DrivingTips {
     static func tip(for date: Date, calendar: Calendar = .current) -> String {
         let day = calendar.ordinality(of: .day, in: .era, for: date) ?? 0
         return all[day % all.count]
+    }
+}
+
+
+// MARK: - Досвід і тижневі завдання
+
+nonisolated struct WeeklyChallenge: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let detail: String
+    let value: Int
+    let goal: Int
+    var isComplete: Bool { value >= goal }
+    var progress: Double { min(1, Double(value) / Double(goal)) }
+    static let bonus = 40
+}
+
+nonisolated struct DriverJourney: Equatable, Sendable {
+    let xp: Int
+    let weekly: [WeeklyChallenge]
+    let weekEnd: Date
+    var level: Int {
+        var result = 1
+        while xp >= Self.threshold(result + 1) { result += 1 }
+        return result
+    }
+    static func threshold(_ level: Int) -> Int { 50 * (level - 1) * level }
+    var levelStart: Int { Self.threshold(level) }
+    var nextLevelXP: Int { Self.threshold(level + 1) }
+    var progress: Double { Double(xp - levelStart) / Double(nextLevelXP - levelStart) }
+    var rank: String {
+        switch level {
+        case 1...2: "Початок шляху"
+        case 3...4: "Уважний водій"
+        case 5...7: "Плавний стиль"
+        default: "Досвід Velox"
+        }
+    }
+}
+
+nonisolated enum Gamification {
+    /// Один календар для всіх екранів: локальний тиждень із понеділка.
+    static var calendar: Calendar {
+        var result = Calendar(identifier: .gregorian)
+        result.timeZone = .current
+        result.firstWeekday = 2
+        result.minimumDaysInFirstWeek = 4
+        return result
+    }
+
+    /// Не винагороджуємо стоянку, короткі, обірвані та старі неперевірні записи.
+    /// 95% покриття допускає короткі паузи GPS/калібрування.
+    static func isEligible(_ trip: TripSummary) -> Bool {
+        let s = trip.stats
+        guard s.duration.isFinite, s.duration >= 300, s.endedNormally, s.hasScoringCoverage,
+              s.metadata?["format"] == "4", Double(s.samples) >= s.duration * 2,
+              s.skippedLines == 0, let score = s.score, (0...100).contains(score),
+              let distance = s.distanceMeters, distance.isFinite, distance >= 500,
+              s.distractions != nil, s.maneuvers != nil else { return false }
+        return Double(max(s.unscoredManeuverSamples, s.unknownMovementSamples)) / Double(s.samples) <= 0.05
+    }
+
+    static func baseXP(_ trip: TripSummary) -> Int {
+        guard isEligible(trip) else { return 0 }
+        return 20 + ((trip.stats.score ?? 0) >= 90 ? 20 : 0)
+            + (trip.stats.distractions == 0 && trip.stats.unknownMovementSamples == 0 ? 20 : 0)
+    }
+
+    static func challenges(_ trips: [TripSummary], calendar: Calendar) -> [WeeklyChallenge] {
+        let safe = trips.filter { ($0.stats.score ?? 0) >= 90 }
+        let focused = trips.filter { $0.stats.distractions == 0 && $0.stats.unknownMovementSamples == 0 }
+        let days = Set(safe.map { calendar.startOfDay(for: $0.date) }).count
+        return [
+            WeeklyChallenge(id: "smooth", title: "Плавність", detail: "3 поїздки з оцінкою від 90", value: safe.count, goal: 3),
+            WeeklyChallenge(id: "focus", title: "Увага на дорозі", detail: "2 поїздки без відволікань і невідомого руху", value: focused.count, goal: 2),
+            WeeklyChallenge(id: "habit", title: "Корисна звичка", detail: "Оцінка від 90 у 3 різні дні", value: days, goal: 3)
+        ]
+    }
+
+    static func evaluate(_ trips: [TripSummary], now: Date = Date(), calendar: Calendar = Gamification.calendar) -> DriverJourney {
+        // Ідентичний файл не приносить досвід двічі; сортування визначає денну межу.
+        var seen = Set<String>()
+        let valid = trips.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date }
+            .filter { $0.date <= now && seen.insert($0.id).inserted && isEligible($0) }
+        var daily = [Date: Int]()
+        var weeks = [Date: [TripSummary]]()
+        var xp = 0
+        for trip in valid {
+            let day = calendar.startOfDay(for: trip.date)
+            let earned = min(baseXP(trip), max(0, 120 - daily[day, default: 0]))
+            daily[day, default: 0] += earned
+            xp += earned
+            if let week = calendar.dateInterval(of: .weekOfYear, for: trip.date)?.start {
+                weeks[week, default: []].append(trip)
+            }
+        }
+        for trips in weeks.values {
+            xp += challenges(trips, calendar: calendar).filter(\.isComplete).count * WeeklyChallenge.bonus
+        }
+        let interval = calendar.dateInterval(of: .weekOfYear, for: now)!
+        return DriverJourney(xp: xp, weekly: challenges(weeks[interval.start] ?? [], calendar: calendar), weekEnd: interval.end)
     }
 }

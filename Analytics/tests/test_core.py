@@ -223,5 +223,32 @@ class ReportTests(unittest.TestCase):
         self.assertIn("CallStart", page)
 
 
+class ReliabilityTests(unittest.TestCase):
+    def test_disabled_maneuvers_and_detector_reset(self):
+        found = detect_maneuvers(np.array([0, 1, 1.1, 2]), np.array([.6]*4), .4, 3,
+                                 enabled=[False, True, True, True], reset_times=[2])
+        self.assertEqual(found, [(1, 'HardAcceleration'), (2, 'HardAcceleration')])
+
+    def test_event_matching_counts_duplicates_and_missing(self):
+        from velox_analytics.validation import match_events
+        result = match_events([(1.5, 'HardBraking'), (1.8, 'HardBraking')],
+                              [dict(start=1, end=2, event='HardBraking'), dict(start=4,end=5,event='HardAcceleration')])
+        self.assertEqual((result['tp'], result['fp'], result['fn']), (1,1,1))
+        self.assertEqual(result['mean_delay_s'], .5)
+
+    def test_final_score_uses_write_order_and_duration_includes_trip_end(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.csv', delete=False) as f:
+            f.write('Timestamp,Filtered_Y,Event,Score,PenaltyTotal,ManeuversEnabled\n0,0,,100,0,0\n1,.5,,100,0,0\n2,0,,100,0,0\n1.5,0,Distraction,95,5,0\n3,0,TripEnd,95,5,0\n')
+        try:
+            trip = load_trip(f.name, CONFIG)
+            self.assertEqual(trip.final_score_logged, 95)
+            self.assertEqual(trip.penalty_total, 5)
+            self.assertEqual(trip.duration, 3)
+            self.assertEqual(len(trip.t), 3)
+            self.assertEqual(trip_row(trip)['Розгонів (перерахунок)'], 0)
+        finally:
+            os.remove(f.name)
+
+
 if __name__ == "__main__":
     unittest.main()

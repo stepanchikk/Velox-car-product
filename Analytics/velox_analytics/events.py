@@ -2,7 +2,7 @@
 
 # Службові рядки нових версій: повторюють останні значення, вимірами не є
 SERVICE_EVENTS = ("DistractionEnd", "DistractionResume", "CallIncoming", "CallStart",
-                  "CallStart_Handheld", "CallEnd", "ScreenLocked", "ScreenUnlocked")
+                  "CallStart_Handheld", "CallEnd", "ScreenLocked", "ScreenUnlocked", "FocusStationary", "FocusUnverified", "TripEnd")
 CALL_START_EVENTS = ("CallIncoming", "CallStart", "CallStart_Handheld")
 
 # Зрозумілі назви подій для звіту
@@ -25,6 +25,9 @@ EVENT_LABELS = {
     "CallStart": "Розмова без рук (гучний звʼязок, гарнітура, CarPlay)",
     "CallStart_Handheld": "Розмова з телефоном біля вуха",
     "CallEnd": "Дзвінок завершено",
+    "FocusStationary": "Втрата активності на стоянці або малiй швидкостi: без штрафу",
+    "FocusUnverified": "Втрата активності без підтвердженого руху: без штрафу",
+    "TripEnd": "Поїздку завершено",
     "ScreenLocked": "Екран заблоковано: запис триває у фоні",
     "ScreenUnlocked": "Екран розблоковано",
 }

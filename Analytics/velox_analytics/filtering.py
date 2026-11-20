@@ -26,14 +26,21 @@ def reconstruct_raw(y, alpha):
     return (y - (1.0 - alpha) * prev) / alpha
 
 
-def detect_maneuvers(t, y, threshold, cooldown):
+def detect_maneuvers(t, y, threshold, cooldown, enabled=None, reset_times=()):
     """Різкі гальмування і розгони, як ManeuverDetector: поріг строгий, а пауза
     окрема для кожного типу, щоб гальмування не «зʼїдало» паузу для розгону.
     Повертає список (час, "HardBraking" | "HardAcceleration")."""
     found = []
     last_brake = -np.inf
     last_accel = -np.inf
-    for ti, yi in zip(t, y):
+    resets = iter(sorted(reset_times))
+    next_reset = next(resets, np.inf)
+    for index, (ti, yi) in enumerate(zip(t, y)):
+        while ti >= next_reset:
+            last_brake = last_accel = -np.inf
+            next_reset = next(resets, np.inf)
+        if enabled is not None and not enabled[index]:
+            continue
         if yi < -threshold and ti - last_brake >= cooldown:
             found.append((ti, "HardBraking"))
             last_brake = ti

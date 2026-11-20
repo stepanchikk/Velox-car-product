@@ -18,6 +18,11 @@ nonisolated struct TripStats: Hashable, Sendable {
     var duration: TimeInterval = 0
     // Кількість рядків-вимірів (без службових рядків подій)
     var samples = 0
+    var endedNormally = false
+    var hasScoringCoverage = false
+    var unscoredManeuverSamples = 0
+    var unknownMovementSamples = 0
+    var hasCompleteScoring: Bool { unscoredManeuverSamples == 0 && unknownMovementSamples == 0 }
     // nil: старий файл без колонки Event, події невідомі
     var hardBrakings: Int?
     var hardAccelerations: Int?
@@ -29,6 +34,8 @@ nonisolated struct TripStats: Hashable, Sendable {
     var screenOffSeconds: Double = 0
     // Останнє значення колонки Score; для файлів без неї - розрахунок за подіями
     var score: Int?
+    // Повний штраф не обмежується 100, навіть коли Safety Score уже 0.
+    var totalPenalty: Int?
     // Відстань за швидкістю GPS; nil, якщо швидкості в файлі немає
     var distanceMeters: Double?
     var calibration: TripCalibrationKind = .unknown
@@ -71,16 +78,29 @@ nonisolated enum TripCSVParser {
         let iEvent = header.firstIndex(of: "Event")
         let iScore = header.firstIndex(of: "Score")
         let iSpeed = header.firstIndex(of: "Speed_mps")
+        let iEnabled = header.firstIndex(of: "ManeuversEnabled")
+        let iMovement = header.firstIndex(of: "Movement")
+        let iPenalty = header.firstIndex(of: "PenaltyTotal")
         let iLat = header.firstIndex(of: "Lat")
 
         var stats = TripStats()
         stats.metadata = metadata.isEmpty ? nil : metadata
+        stats.hasScoringCoverage = iEnabled != nil && iMovement != nil
         var brakings = 0, accelerations = 0, distractions = 0
         var distractionSeconds = 0.0
         var distractionOpenedAt: Double?
         var screenLockedAt: Double?
         var hasDurationEvents = metadata["distractionDurationStep"] != nil
         var lastScore: Int?
+        var lastPenalty: Int?
+        var episodeDuration = 0.0
+        var episodePenalty = 0
+        var durationPenalty = 0
+        let maneuverPenalty = Int(metadata.double("maneuverPenalty") ?? Double(VeloxConfig.maneuverPenalty))
+        let distractionPenalty = Int(metadata.double("distractionPenalty") ?? Double(VeloxConfig.distractionPenalty))
+        let durationStep = max(0.001, metadata.double("distractionDurationStep") ?? VeloxConfig.distractionDurationStep)
+        let durationUnit = Int(metadata.double("distractionDurationPenalty") ?? Double(VeloxConfig.distractionDurationPenalty))
+        let durationMax = Int(metadata.double("distractionDurationPenaltyMax") ?? Double(VeloxConfig.distractionDurationPenaltyMax))
         var distance = 0.0
         var hasSpeed = false
         var previous: (time: Double, speed: Double)?
@@ -91,7 +111,9 @@ nonisolated enum TripCSVParser {
                 stats.skippedLines += 1
                 continue
             }
+            guard time.isFinite, time >= 0 else { stats.skippedLines += 1; continue }
             stats.duration = max(stats.duration, time)
+            if let i = iPenalty, let value = Int(fields[i]), value >= 0 { lastPenalty = value }
             if !stats.hasRoute, let i = iLat, !fields[i].isEmpty {
                 stats.hasRoute = true
             }
@@ -101,15 +123,25 @@ nonisolated enum TripCSVParser {
 
             let event = iEvent.map { String(fields[$0]) } ?? ""
             switch event {
+            case "TripEnd": stats.endedNormally = true
             case "HardBraking": brakings += 1
             case "HardAcceleration": accelerations += 1
             case "Distraction", "DistractionResume":
-                if event == "Distraction" { distractions += 1 }
+                if event == "Distraction" {
+                    distractions += 1
+                    episodeDuration = 0
+                    episodePenalty = 0
+                }
                 if distractionOpenedAt == nil { distractionOpenedAt = time }
             case "DistractionEnd":
                 hasDurationEvents = true
                 if let openedAt = distractionOpenedAt {
-                    distractionSeconds += max(0, time - openedAt)
+                    let duration = max(0, time - openedAt)
+                    distractionSeconds += duration
+                    episodeDuration += duration
+                    let target = min(durationMax, Int(episodeDuration / durationStep) * durationUnit)
+                    durationPenalty += max(0, target - episodePenalty)
+                    episodePenalty = target
                     distractionOpenedAt = nil
                 }
             case "ScreenLocked":
@@ -129,13 +161,15 @@ nonisolated enum TripCSVParser {
             // Службові рядки (відволікання, калібрування, дзвінки) повторюють
             // останні значення і вимірами не є
             if event.hasPrefix("Distraction") || event.hasPrefix("Calibration") || event.hasPrefix("Call")
-                || event.hasPrefix("Screen") {
+                || event.hasPrefix("Screen") || event.hasPrefix("Focus") || event == "TripEnd" {
                 continue
             }
             stats.samples += 1
+            if let i = iEnabled, fields[i] != "1" { stats.unscoredManeuverSamples += 1 }
+            if let i = iMovement, fields[i] != "moving", fields[i] != "stationary" { stats.unknownMovementSamples += 1 }
 
             // Відстань: інтеграл швидкості за методом трапецій
-            if let i = iSpeed, let speed = Double(fields[i]) {
+            if let i = iSpeed, let speed = Double(fields[i]), speed.isFinite, speed >= 0 {
                 hasSpeed = true
                 if let prev = previous {
                     let dt = time - prev.time
@@ -159,11 +193,13 @@ nonisolated enum TripCSVParser {
         if let lockedAt = screenLockedAt {
             stats.screenOffSeconds += max(0, stats.duration - lockedAt)
         }
-        if let lastScore = lastScore {
-            stats.score = lastScore
-        } else if iEvent != nil {
-            stats.score = SafetyScoreCalculator.score(maneuvers: brakings + accelerations,
-                                                      distractions: distractions)
+        let eventPenalty = maneuverPenalty * (brakings + accelerations)
+            + distractionPenalty * distractions + durationPenalty
+        stats.totalPenalty = lastPenalty ?? (iEvent != nil ? eventPenalty : lastScore.map { max(0, 100 - $0) })
+        if let lastScore {
+            stats.score = max(0, min(100, lastScore))
+        } else if let penalty = stats.totalPenalty {
+            stats.score = max(0, 100 - penalty)
         }
         stats.distanceMeters = hasSpeed ? distance : nil
         return stats
@@ -222,7 +258,9 @@ nonisolated struct TripRoute: Equatable, Sendable {
             case "Distraction": kind = .distraction
             default: kind = nil
             }
-            if let kind = kind, let point = last {
+            if let kind = kind, let lat = Double(fields[iLat]), let lon = Double(fields[iLon]),
+               lat.isFinite, lon.isFinite {
+                let point = RoutePoint(latitude: lat, longitude: lon)
                 events.append(Event(id: events.count, kind: kind, point: point, time: time))
             }
         }
@@ -274,7 +312,7 @@ nonisolated struct LiveRoute: Equatable, Sendable {
     /// (тунель, GPS вимкнено), мітка не ставиться: місце було б неправдивим.
     @discardableResult
     mutating func addEvent(_ kind: TripRoute.EventKind, at time: TimeInterval, maxAge: TimeInterval) -> Bool {
-        guard let point = points.last, time - lastFixTime <= maxAge else { return false }
+        guard let point = points.last, time >= lastFixTime, time - lastFixTime <= maxAge else { return false }
         events.append(TripRoute.Event(id: nextEventId, kind: kind, point: point, time: time))
         nextEventId += 1
         return true
@@ -363,7 +401,7 @@ nonisolated enum TripLibrary {
                 continue
             }
             guard let text = try? String(contentsOf: url, encoding: .utf8),
-                  let stats = TripCSVParser.parse(text) else { continue }
+                  let stats = TripCSVParser.parse(text), stats.samples > 0 else { continue }
 
             let summary = TripSummary(fileName: name,
                                       url: url,

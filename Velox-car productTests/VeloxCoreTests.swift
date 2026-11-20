@@ -1,6 +1,73 @@
 import XCTest
 @testable import Velox_car_product
 
+final class ReliabilityTests: XCTestCase {
+    func testMovementRequiresFreshValidSpeed() {
+        XCTAssertFalse(MovementPolicy.canRecalibrate(speed: nil, age: 0))
+        XCTAssertFalse(MovementPolicy.canRecalibrate(speed: 0, age: 4))
+        XCTAssertFalse(MovementPolicy.canRecalibrate(speed: .nan, age: 0))
+        XCTAssertFalse(MovementPolicy.canRecalibrate(speed: 0, age: -1))
+        XCTAssertFalse(MovementPolicy.canRecalibrate(speed: 10, age: 0))
+        XCTAssertTrue(MovementPolicy.canRecalibrate(speed: 0, age: 1))
+        XCTAssertEqual(MovementPolicy.state(speed: 2, age: 0), .moving)
+    }
+
+    func testRejectedGPSCannotContaminateNextInterval() {
+        let c = ForwardCalibrator(up: Vector3(x: 0, y: 0, z: 1))
+        _ = c.addLocationSample(speed: 10, speedAccuracy: 0.1, time: 0)
+        c.addMotionSample(userAcceleration: Vector3(x: 0.1, y: 0, z: 0))
+        _ = c.addLocationSample(speed: 14, speedAccuracy: 10, time: 1)
+        c.addMotionSample(userAcceleration: Vector3(x: 0.1, y: 0, z: 0))
+        _ = c.addLocationSample(speed: 15, speedAccuracy: 0.1, time: 2)
+        XCTAssertEqual(c.energy, 0)
+        c.addMotionSample(userAcceleration: Vector3(x: 0.1, y: 0, z: 0))
+        _ = c.addLocationSample(speed: 16, speedAccuracy: 0.1, time: 3)
+        XCTAssertEqual(c.energy, 1, accuracy: 1e-9)
+    }
+
+    func testUncappedPenaltySurvivesCSVAndRating() throws {
+        var stats = try XCTUnwrap(TripCSVParser.parse("Timestamp,Filtered_Y,Event,Score,PenaltyTotal\n1,0,,0,200\n2,0,,0,200\n3,0,TripEnd,0,200"))
+        XCTAssertEqual(stats.totalPenalty, 200)
+        XCTAssertEqual(stats.samples, 2)
+        stats.distanceMeters = 100_000
+        let trip = TripSummary(fileName: "test", url: URL(fileURLWithPath: "/tmp/test"), date: Date(), fileSize: nil, stats: stats)
+        XCTAssertEqual(DrivingStats.rating([trip]), 80)
+    }
+
+    func testRecordedWeightsAndResumedDuration() throws {
+        let stats = try XCTUnwrap(TripCSVParser.parse("# maneuverPenalty=3\n# distractionPenalty=7\n# distractionDurationStep=10\n# distractionDurationPenalty=2\n# distractionDurationPenaltyMax=8\nTimestamp,Filtered_Y,Event\n0,0,Distraction\n6,0,DistractionEnd\n6.1,0,DistractionResume\n12.1,0,DistractionEnd\n13,-0.5,HardBraking"))
+        XCTAssertEqual(stats.totalPenalty, 12)
+        XCTAssertEqual(stats.score, 88)
+        XCTAssertEqual(stats.distractionSeconds, 12)
+    }
+
+    func testRouteDoesNotUseStaleCoordinates() throws {
+        let route = try XCTUnwrap(TripRoute.parse("Timestamp,Lat,Lon,Event\n0,48,25,\n1,48.001,25,\n30,,,Distraction"))
+        XCTAssertTrue(route.events.isEmpty)
+    }
+
+    @MainActor func testResetCannotEraseActiveTripPenalties() {
+        let manager = SensorManager()
+        manager.isRecording = true
+        manager.hardBrakingCount = 3
+        manager.distractionCount = 2
+        manager.resetData()
+        XCTAssertEqual(manager.totalPenalty, 16)
+        XCTAssertEqual(manager.safetyScore, 84)
+        manager.isRecording = false
+        manager.resetData()
+        XCTAssertEqual(manager.safetyScore, 100)
+    }
+
+    @MainActor func testFallbackDoesNotAuthorizeManeuvers() {
+        let manager = SensorManager()
+        manager.calibration = CalibrationResult(up: Vector3(x: 0, y: 0, z: 1), forward: Vector3(x: 0, y: 1, z: 0), forwardSource: .fallbackFlatMount, forwardQuality: 0)
+        XCTAssertFalse(manager.maneuversEnabled)
+        manager.yawDirectionChecked = true
+        XCTAssertTrue(manager.maneuversEnabled)
+    }
+}
+
 // Юніт-тести чистої логіки Velox. Сенсори не потрібні: тести запускаються
 // в симуляторі (Cmd+U). Числа в очікуваннях пояснено в коментарях.
 
@@ -321,7 +388,7 @@ final class TripCSVWriterTests: XCTestCase {
     func testRowHasSameColumnCountAsHeaderAndNoExtraCommas() {
         let header = TripCSVWriter.header.split(separator: ",", omittingEmptySubsequences: false)
         let line = row(time: 1, state: "Запис, іде").csvLine.split(separator: ",", omittingEmptySubsequences: false)
-        XCTAssertEqual(header.count, 16)
+        XCTAssertEqual(header.count, 21)
         XCTAssertEqual(line.count, header.count)
         XCTAssertEqual(String(line[2]), "Запис іде")   // кома зі стану прибрана
         // Гіроскоп - після прискорень, у колонках Gx, Gy, Gz
@@ -334,7 +401,7 @@ final class TripCSVWriterTests: XCTestCase {
                              userAcceleration: .zero, rotationRate: .zero, tiltDegrees: 0,
                              score: 100, speed: nil, coordinate: nil)
         let fields = r.csvLine.split(separator: ",", omittingEmptySubsequences: false)
-        XCTAssertEqual(fields.count, 16)
+        XCTAssertEqual(fields.count, 21)
         XCTAssertEqual(fields[13...15].map(String.init), ["", "", ""])   // Speed_mps, Lat, Lon
     }
 
@@ -500,7 +567,7 @@ final class TripMetadataTests: XCTestCase {
         XCTAssertEqual(stats.score, 94)
     }
 
-    // Маршрут: однакові точки підряд прибираються, події стають на останню відому точку
+    // Маршрут: однакові точки підряд прибираються, подія вимагає власних свіжих координат
     func testRouteParsing() throws {
         let csv = """
         # format=3
@@ -520,8 +587,8 @@ final class TripMetadataTests: XCTestCase {
         XCTAssertEqual(route.points, [RoutePoint(latitude: 48.1, longitude: 25.1),
                                       RoutePoint(latitude: 48.2, longitude: 25.2),
                                       RoutePoint(latitude: 48.3, longitude: 25.3)])
-        XCTAssertEqual(route.events.map(\.kind), [.hardBraking, .distraction])
-        XCTAssertEqual(route.events[0].point, RoutePoint(latitude: 48.1, longitude: 25.1))
+        XCTAssertEqual(route.events.map(\.kind), [.distraction])
+        XCTAssertEqual(route.events[0].point, RoutePoint(latitude: 48.2, longitude: 25.2))
     }
 
     func testNoRouteWithoutCoordinates() throws {
@@ -564,6 +631,7 @@ final class TripMetadataTests: XCTestCase {
         XCTAssertFalse(route.addEvent(.hardBraking, at: 0, maxAge: 3), "без координат мітки немає")
         let point = RoutePoint(latitude: 48.29, longitude: 25.93)
         route.add(point, at: 10)
+        XCTAssertFalse(route.addEvent(.distraction, at: 9, maxAge: 3), "майбутня точка не позначає минулу подію")
         XCTAssertTrue(route.addEvent(.hardBraking, at: 12, maxAge: 3))
         XCTAssertFalse(route.addEvent(.distraction, at: 14, maxAge: 3), "GPS мовчить довше за 3 с")
         XCTAssertEqual(route.events.map(\.kind), [.hardBraking])
@@ -1056,6 +1124,10 @@ final class GamificationTests: XCTestCase {
                       distance: Double? = 5_000, distractions: Int? = 0) -> TripSummary {
         var stats = TripStats()
         stats.duration = duration
+        stats.samples = Int(duration * 10)
+        stats.endedNormally = true
+        stats.hasScoringCoverage = true
+        stats.metadata = TripMetadata(entries: [.init(key: "format", value: "4")])
         stats.score = score
         stats.distanceMeters = distance
         stats.distractions = distractions
@@ -1066,6 +1138,96 @@ final class GamificationTests: XCTestCase {
                            date: Date(timeIntervalSince1970: Double(day) * 86_400),
                            fileSize: nil,
                            stats: stats)
+    }
+
+    func testXPRewardsQualityAndCapsDailyExperience() {
+        let good = trip(day: 4, score: 100)
+        XCTAssertEqual(Gamification.baseXP(good), 60)
+        XCTAssertEqual(Gamification.baseXP(trip(day: 4, score: 80, distractions: 1)), 20)
+        let copies = (0..<5).map { n in
+            TripSummary(fileName: "trip-\(n)", url: good.url, date: good.date, fileSize: nil, stats: good.stats)
+        }
+        let result = Gamification.evaluate(copies, now: good.date)
+        // 120 за день + плавність і увага (2 × 40), але не три різні дні.
+        XCTAssertEqual(result.xp, 200)
+        XCTAssertEqual(result.weekly.filter(\.isComplete).count, 2)
+        XCTAssertEqual(Gamification.evaluate(copies + copies, now: good.date), result)
+        XCTAssertEqual(Gamification.evaluate(copies.reversed(), now: good.date), result)
+    }
+
+    func testXPRejectsShortStationaryLegacyIncompleteAndSparseTrips() {
+        let good = trip(day: 4, score: 100)
+        var variants: [TripStats] = []
+        var stats = good.stats
+        stats.duration = 299; variants.append(stats)
+        stats = good.stats; stats.distanceMeters = 499; variants.append(stats)
+        stats = good.stats; stats.metadata = nil; variants.append(stats)
+        stats = good.stats; stats.hasScoringCoverage = false; variants.append(stats)
+        stats = good.stats; stats.endedNormally = false; variants.append(stats)
+        stats = good.stats; stats.samples = 10; variants.append(stats)
+        stats = good.stats; stats.unknownMovementSamples = 301; variants.append(stats)
+        stats = good.stats; stats.unscoredManeuverSamples = 301; variants.append(stats)
+        stats = good.stats; stats.skippedLines = 1; variants.append(stats)
+        for stats in variants {
+            let invalid = TripSummary(fileName: good.id, url: good.url, date: good.date, fileSize: nil, stats: stats)
+            XCTAssertEqual(Gamification.baseXP(invalid), 0)
+            let awards = AchievementCatalog.evaluate([invalid])
+            XCTAssertFalse(awards.first { $0.id == "perfect" }!.isUnlocked)
+        }
+    }
+
+    func testCoverageThresholdAndFocusBonus() {
+        let good = trip(day: 4, score: 100)
+        var stats = good.stats
+        stats.unknownMovementSamples = 300 // рівно 5%
+        let partial = TripSummary(fileName: good.id, url: good.url, date: good.date, fileSize: nil, stats: stats)
+        XCTAssertTrue(Gamification.isEligible(partial))
+        XCTAssertEqual(Gamification.baseXP(partial), 40)
+        XCTAssertFalse(AchievementCatalog.evaluate([partial]).first { $0.id == "perfect" }!.isUnlocked)
+    }
+
+    func testWeeklyMondayBoundaryAndHistoricalBonuses() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Kyiv")!
+        calendar.firstWeekday = 2
+        calendar.minimumDaysInFirstWeek = 4
+        let monday = calendar.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 12))!
+        let trips = (0..<3).map { offset in
+            let sample = trip(day: offset, score: 100)
+            return TripSummary(fileName: sample.id, url: sample.url,
+                               date: calendar.date(byAdding: .day, value: offset, to: monday)!,
+                               fileSize: nil, stats: sample.stats)
+        }
+        let now = calendar.date(byAdding: .day, value: 3, to: monday)!
+        let result = Gamification.evaluate(trips, now: now, calendar: calendar)
+        XCTAssertEqual(result.xp, 300) // 3 × 60 + 3 × 40
+        XCTAssertEqual(result.level, 3)
+        XCTAssertEqual(result.progress, 0)
+        XCTAssertEqual(result.weekly.filter(\.isComplete).count, 3)
+        let nextMonday = calendar.date(byAdding: .day, value: 7, to: monday)!
+        let nextWeek = Gamification.evaluate(trips, now: nextMonday, calendar: calendar)
+        XCTAssertEqual(nextWeek.xp, result.xp)
+        XCTAssertTrue(nextWeek.weekly.allSatisfy { $0.value == 0 })
+        XCTAssertEqual(Gamification.evaluate(trips, now: monday, calendar: calendar).xp, 60)
+        XCTAssertEqual(Gamification.evaluate([], now: now, calendar: calendar).level, 1)
+    }
+
+    func testRewardsUseParsedCoverageRatherThanMetadataAlone() throws {
+        let header = "# format=4\nTimestamp,Filtered_Y,Event,Score,Speed_mps,ManeuversEnabled,Movement\n"
+        let rows = (0..<600).map { "\(Double($0) / 2),0,,95,5,1,moving" }.joined(separator: "\n")
+        let stats = try XCTUnwrap(TripCSVParser.parse(header + rows + "\n300,0,TripEnd,95,5,1,moving"))
+        let trip = TripSummary(fileName: "parsed", url: URL(fileURLWithPath: "/tmp/parsed"), date: Date(), fileSize: nil, stats: stats)
+        XCTAssertEqual(Gamification.baseXP(trip), 60)
+        let missing = try XCTUnwrap(TripCSVParser.parse("# format=4\nTimestamp,Event,Score\n300,TripEnd,100"))
+        XCTAssertFalse(missing.hasScoringCoverage)
+        let invalid = try XCTUnwrap(TripCSVParser.parse(header + "1,0,,100,5,1,invalid"))
+        XCTAssertEqual(invalid.unknownMovementSamples, 1)
+    }
+
+    func testTripEndIsRequiredForRewards() throws {
+        let header = "Timestamp,Filtered_Y,Event,Score"
+        XCTAssertFalse(try XCTUnwrap(TripCSVParser.parse(header + "\n1,0,,100")).endedNormally)
+        XCTAssertTrue(try XCTUnwrap(TripCSVParser.parse(header + "\n1,0,,100\n2,0,TripEnd,100")).endedNormally)
     }
 
     func testStatsUseTenNewestTrips() {
@@ -1145,5 +1307,139 @@ final class GamificationTests: XCTestCase {
         let evening = day.addingTimeInterval(20 * 3_600)
         XCTAssertEqual(DrivingTips.tip(for: morning), DrivingTips.tip(for: evening))
         XCTAssertFalse(DrivingTips.tip(for: morning).isEmpty)
+    }
+}
+
+final class AttentionIntegrationTests: XCTestCase {
+    @MainActor func testFocusOnlyPenalizedDuringKnownMovement() {
+        let manager = SensorManager()
+        manager.startUptime = ProcessInfo.processInfo.systemUptime - 100
+        manager.isRecording = true
+        manager.hasCalibrated = true
+        manager.focusDistractionRequested = true
+        manager.reconcileDistraction(at: 10)
+        XCTAssertEqual(manager.distractionCount, 0, "Невідомий рух не штрафується")
+        manager.speedHistory = [(10, 0)]
+        manager.reconcileDistraction(at: 10)
+        XCTAssertEqual(manager.distractionCount, 0, "Стоянка не штрафується")
+        manager.speedHistory.append((11, 10))
+        manager.reconcileDistraction(at: 11)
+        XCTAssertEqual(manager.distractionCount, 1)
+        XCTAssertTrue(manager.distractionTracker.isActive)
+        manager.reconcileDistraction(at: 15)
+        XCTAssertFalse(manager.distractionTracker.isActive, "Застарілий GPS закриває штрафований інтервал")
+        XCTAssertEqual(manager.distractionSeconds, 3)
+        manager.isRecording = false
+    }
+
+    @MainActor func testLockedScreenNeverStartsMovingDistraction() {
+        let manager = SensorManager()
+        manager.isRecording = true
+        manager.hasCalibrated = true
+        manager.focusDistractionRequested = true
+        manager.speedHistory = [(10, 10)]
+        _ = manager.screenTracker.deviceLocked(at: 10)
+        manager.reconcileDistraction(at: 11)
+        XCTAssertEqual(manager.distractionCount, 0)
+        manager.isRecording = false
+    }
+}
+
+nonisolated final class RoadFeatureURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var responseCode = 200
+    nonisolated(unsafe) static var requests = 0
+    nonisolated(unsafe) static var responseBody = Data()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.requests += 1
+        let response = HTTPURLResponse(url: request.url!, statusCode: Self.responseCode,
+                                       httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.responseBody)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() { }
+}
+
+final class RoadFeatureTests: XCTestCase {
+    private let point = RoutePoint(latitude: 49, longitude: 24)
+    private var payload: Data {
+        Data(#"{"elements":[{"type":"node","id":1,"lat":49,"lon":24,"tags":{"highway":"traffic_signals"}},{"type":"node","id":2,"lat":49.001,"lon":24,"tags":{"highway":"stop"}},{"type":"node","id":3,"lat":49,"lon":24,"tags":{"highway":"give_way"}},{"type":"node","id":4,"lat":49,"lon":24,"tags":{"traffic_sign":"maxspeed","maxspeed":"30 mph"}},{"type":"node","id":4,"lat":49,"lon":24,"tags":{"traffic_sign":"maxspeed","maxspeed":"30 mph"}},{"type":"node","id":5,"lat":490,"lon":24,"tags":{"highway":"stop"}},{"type":"way","id":6,"tags":{"highway":"stop"}},{"type":"node","id":7,"lat":49,"lon":24,"tags":{"highway":"crossing"}}]}"#.utf8)
+    }
+
+    func testParseObjectsWithoutInventingSignalStateOrSpeedUnits() throws {
+        let features = try RoadFeatureParser.parse(payload)
+        XCTAssertEqual(features.map(\.kind), [.signal, .stop, .giveWay, .speedLimit])
+        XCTAssertEqual(features.last?.speedLabel, "30 mph")
+        XCTAssertEqual(features.first?.title, "Світлофор")
+    }
+
+    func testMalformedAndEmptyResponses() throws {
+        XCTAssertThrowsError(try RoadFeatureParser.parse(Data("<html>error</html>".utf8)))
+        XCTAssertTrue(try RoadFeatureParser.parse(Data(#"{"elements":[]}"#.utf8)).isEmpty)
+    }
+
+    func testRateLimitMovementAndCacheAge() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let far = RoutePoint(latitude: 49.01, longitude: 24)
+        XCTAssertTrue(RoadFeaturePolicy.shouldRefresh(center: nil, lastAttempt: nil, near: point, now: now))
+        XCTAssertFalse(RoadFeaturePolicy.shouldRefresh(center: point, lastAttempt: now, near: far, now: now.addingTimeInterval(59)))
+        XCTAssertTrue(RoadFeaturePolicy.shouldRefresh(center: point, lastAttempt: now, near: far, now: now.addingTimeInterval(60)))
+        XCTAssertFalse(RoadFeaturePolicy.shouldRefresh(center: point, lastAttempt: now, near: point, now: now.addingTimeInterval(899)))
+        XCTAssertTrue(RoadFeaturePolicy.shouldRefresh(center: point, lastAttempt: now, near: point, now: now.addingTimeInterval(900)))
+    }
+
+    func testQueryIsBoundedAndCoordinatesAreValidated() {
+        let query = RoadFeaturePolicy.query(near: point)
+        XCTAssertTrue(query.contains("around:1500,49.0,24.0"))
+        XCTAssertTrue(query.contains("out body 300"))
+        XCTAssertTrue(query.contains("[timeout:12]"))
+        XCTAssertFalse(RoadFeaturePolicy.isValid(RoutePoint(latitude: .nan, longitude: 24)))
+        XCTAssertFalse(RoadFeaturePolicy.isValid(RoutePoint(latitude: 49, longitude: 181)))
+    }
+
+    @MainActor func testStoreLoadsFiltersAndDoesNotRefetchImmediately() async {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RoadFeatureURLProtocol.self]
+        RoadFeatureURLProtocol.requests = 0
+        RoadFeatureURLProtocol.responseCode = 200
+        RoadFeatureURLProtocol.responseBody = payload
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let store = RoadFeatureStore(session: session)
+        let now = Date()
+        await store.refresh(near: point, now: now)
+        XCTAssertEqual(store.features.count, 4)
+        await store.refresh(near: point, now: now.addingTimeInterval(10))
+        XCTAssertEqual(RoadFeatureURLProtocol.requests, 1)
+        store.clear()
+        XCTAssertTrue(store.features.isEmpty)
+    }
+
+    @MainActor func testFailureClearsMarkersAndRetriesAfterCooldown() async {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RoadFeatureURLProtocol.self]
+        RoadFeatureURLProtocol.requests = 0
+        RoadFeatureURLProtocol.responseCode = 200
+        RoadFeatureURLProtocol.responseBody = payload
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let store = RoadFeatureStore(session: session)
+        let now = Date()
+        await store.refresh(near: point, now: now)
+        RoadFeatureURLProtocol.responseCode = 429
+        await store.refresh(near: point, now: now.addingTimeInterval(900))
+        XCTAssertTrue(store.features.isEmpty)
+        XCTAssertTrue(store.status.contains("недоступні"))
+        await store.refresh(near: point, now: now.addingTimeInterval(910))
+        XCTAssertEqual(RoadFeatureURLProtocol.requests, 2)
+        RoadFeatureURLProtocol.responseCode = 200
+        await store.refresh(near: point, now: now.addingTimeInterval(960))
+        XCTAssertEqual(store.features.count, 4)
+        XCTAssertEqual(RoadFeatureURLProtocol.requests, 3)
+        store.waitingForLocation()
+        XCTAssertTrue(store.features.isEmpty)
     }
 }

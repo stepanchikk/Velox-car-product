@@ -58,6 +58,28 @@ extension SensorManager {
     }
 
     private func beginDistraction(at time: TimeInterval) {
+        focusDistractionRequested = true
+        guard movementState(at: time) == .moving else {
+            appendEventRow(event: movementState(at: time) == .stationary ? "FocusStationary" : "FocusUnverified", time: time)
+            return
+        }
+        startMovingDistraction(at: time)
+    }
+
+    func reconcileDistraction(at time: TimeInterval) {
+        guard isRecording else { return }
+        if movementState(at: time) != .moving {
+            let lastFix = speedHistory.last(where: { $0.time <= time })
+            let end = lastFix.map { min(time, $0.time + VeloxConfig.speedMaxAge) } ?? time
+            endDistraction(at: end)
+        } else if (focusDistractionRequested || handheldDistractionRequested),
+                  !screenTracker.isLocked, !distractionsPaused {
+            startMovingDistraction(at: time)
+            if handheldDistractionRequested { handheldCallEpisode = distractionTracker.isActive }
+        }
+    }
+
+    private func startMovingDistraction(at time: TimeInterval) {
         switch distractionTracker.begin(at: time) {
         case .counted:
             distractionCount += 1
@@ -100,6 +122,7 @@ extension SensorManager {
     private func handleFocusGained() {
         guard isRecording else { return }
         resolvePendingFocusLoss()
+        focusDistractionRequested = false
         if backgroundRecording {
             applyScreenActions(screenTracker.focusGained(at: sessionTime()))
             if phoneState == .screenOff {
@@ -147,6 +170,7 @@ extension SensorManager {
         for action in actions {
             switch action {
             case .screenLocked(let time):
+                focusDistractionRequested = false
                 appendEventRow(event: "ScreenLocked", time: time)
                 if !distractionTracker.isActive, !callInProgress {
                     phoneState = .screenOff
@@ -159,6 +183,7 @@ extension SensorManager {
                     beginDistraction(at: time)
                 }
             case .endDistraction(let time):
+                focusDistractionRequested = false
                 endDistraction(at: time)
                 if screenTracker.isLocked, !callInProgress {
                     phoneState = .screenOff
@@ -198,6 +223,7 @@ extension SensorManager {
         let now = sessionTime()
         switch currentCallState {
         case .none, .incomingRinging:
+            handheldDistractionRequested = false
             guard callInProgress else { return }
             callInProgress = false
             callStartedAt = nil
@@ -219,8 +245,10 @@ extension SensorManager {
             }
             // Розмова з телефоном біля вуха - відволікання (поки звук не перемкнули
             // на гучний звʼязок чи гарнітуру)
-            if handheld, !distractionTracker.isActive, !distractionsPaused {
-                beginDistraction(at: now)
+            handheldDistractionRequested = handheld
+            if handheld, !distractionTracker.isActive, !distractionsPaused,
+               movementState(at: now) == .moving {
+                startMovingDistraction(at: now)
                 handheldCallEpisode = distractionTracker.isActive
             } else if !handheld, handheldCallEpisode {
                 endDistraction(at: now)

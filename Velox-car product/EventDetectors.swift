@@ -29,6 +29,25 @@ nonisolated struct LowPassFilter {
     }
 }
 
+// MARK: - Достовірність руху
+
+nonisolated enum MovementState: String {
+    case moving, stationary, unknown
+}
+
+nonisolated enum MovementPolicy {
+    static func state(speed: Double?, age: TimeInterval) -> MovementState {
+        guard let speed, speed.isFinite, speed >= 0, age >= 0,
+              age <= VeloxConfig.speedMaxAge else { return .unknown }
+        return speed >= VeloxConfig.movementMinSpeed ? .moving : .stationary
+    }
+
+    static func canRecalibrate(speed: Double?, age: TimeInterval) -> Bool {
+        state(speed: speed, age: age) == .stationary
+            && (speed ?? .infinity) < VeloxConfig.manualRecalibrationMaxSpeed
+    }
+}
+
 // MARK: - Небезпечні маневри
 
 nonisolated enum Maneuver {

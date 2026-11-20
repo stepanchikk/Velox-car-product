@@ -129,7 +129,14 @@ nonisolated enum KeychainStore {
 
     @discardableResult
     static func save(_ data: Data, account: String) -> Bool {
-        delete(account: account)
+        let updateQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let status = SecItemUpdate(updateQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -207,12 +214,14 @@ final class AccountStore: ObservableObject {
         }
         guard errors.isEmpty else { return errors }
 
-        if let old = profile {
-            KeychainStore.delete(account: old.email)
-            removeAvatar()
-        }
-        guard KeychainStore.save(PasswordHasher.makeCredential(password), account: cleanEmail) else {
+        let credential = PasswordHasher.makeCredential(password)
+        guard credential.count == PasswordHasher.saltLength + PasswordHasher.hashLength,
+              KeychainStore.save(credential, account: cleanEmail) else {
             return ["Не вдалося зберегти пароль у Keychain. Спробуйте ще раз."]
+        }
+        if let old = profile {
+            if old.email != cleanEmail { KeychainStore.delete(account: old.email) }
+            removeAvatar()
         }
         let newProfile = UserProfile(name: cleanName,
                                      email: cleanEmail,

@@ -26,6 +26,7 @@ struct HomeView: View {
                     if stats.recentScores.count >= 2 {
                         trend
                     }
+                    JourneyCard(trips: tripStore.trips)
                     achievementStrip
                     tip
                 }
@@ -283,5 +284,54 @@ struct AchievementsView: View {
         .background(VeloxColor.background.ignoresSafeArea())
         .navigationTitle("Досягнення")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+
+// Єдині правила і спільне представлення прогресу на головній та в профілі.
+struct JourneyCard: View {
+    let trips: [TripSummary]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let journey = Gamification.evaluate(trips, now: context.date)
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Image(systemName: "rosette").font(.title).foregroundStyle(VeloxColor.accent)
+                    VStack(alignment: .leading) {
+                        Text("Рівень \(journey.level) · \(journey.rank)").font(.headline)
+                        Text("\(journey.xp) XP досвіду").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                ProgressView(value: journey.progress).tint(VeloxColor.accent)
+                    .accessibilityLabel("Прогрес рівня")
+                Text("До рівня \(journey.level + 1): \(journey.nextLevelXP - journey.xp) XP")
+                    .font(.caption).foregroundStyle(.secondary)
+                Divider()
+                Text("Завдання тижня").font(.headline)
+                Text("Оновлення \(journey.weekEnd.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(journey.weekly) { challenge in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Label(challenge.title, systemImage: challenge.isComplete ? "checkmark.seal.fill" : "target")
+                                .foregroundStyle(challenge.isComplete ? VeloxColor.safe : VeloxColor.accent)
+                            Spacer()
+                            Text("\(min(challenge.value, challenge.goal))/\(challenge.goal) · +40 XP")
+                                .monospacedDigit().foregroundStyle(.secondary)
+                        }.font(.subheadline)
+                        Text(challenge.detail).font(.caption).foregroundStyle(.secondary)
+                        ProgressView(value: challenge.progress).tint(VeloxColor.accent)
+                    }
+                }
+                DisclosureGroup("Як отримати досвід?") {
+                    Text("Поїздка від 5 хв і 500 м: 20 XP; оцінка від 90: ще 20; без відволікань і невідомого руху: ще 20. До 120 XP за поїздки на день. Завдання дає 40 XP один раз за тиждень. Потрібні формат 4, штатне завершення, достатня частота вимірів і щонайменше 95% покриття напрямом та рухом. Старі й неповні записи залишаються в історії. Прогрес обчислюється з історії цього пристрою; видалення поїздок змінює його. Рівень відображає досвід у Velox, а не кваліфікацію водія.")
+                        .font(.caption).foregroundStyle(.secondary).padding(.top, 8)
+                }.font(.subheadline)
+                Text("Виконуйте завдання під час звичайних поїздок. Переглядайте винагороди після зупинки.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.veloxPanel()
+        }
     }
 }

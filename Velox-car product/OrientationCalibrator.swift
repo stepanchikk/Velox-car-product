@@ -153,13 +153,20 @@ nonisolated final class ForwardCalibrator {
     // накопичено достатньо даних (goodEnergyThreshold) для завершення.
     func addLocationSample(speed: Double, speedAccuracy: Double, time: TimeInterval) -> Vector3? {
         defer {
-            lastSpeed = speed
-            lastSpeedTime = time
             bufferE1Sum = 0; bufferE2Sum = 0; bufferCount = 0
         }
-
-        guard speed >= 0, speedAccuracy >= 0, speedAccuracy < Self.maxSpeedAccuracy else { return nil }
-        guard let prevSpeed = lastSpeed, let prevTime = lastSpeedTime else { return nil }
+        guard speed.isFinite, time.isFinite, speedAccuracy.isFinite,
+              speed >= 0, speedAccuracy >= 0, speedAccuracy < Self.maxSpeedAccuracy else {
+            lastSpeed = nil
+            lastSpeedTime = nil
+            return nil
+        }
+        // Точка з коректною точністю стає базою лише після валідації.
+        let previousSpeed = lastSpeed
+        let previousTime = lastSpeedTime
+        lastSpeed = speed
+        lastSpeedTime = time
+        guard let prevSpeed = previousSpeed, let prevTime = previousTime else { return nil }
         let dt = time - prevTime
         guard dt > 0.2, dt < Self.maxIntervalGap, bufferCount > 0 else { return nil }
 

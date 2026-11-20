@@ -1,0 +1,2 @@
+# CSV fixtures retain the standard CRLF emitted by Python csv.writer.
+*.csv whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

@@ -111,6 +111,11 @@ extension SensorManager {
             calibrationInfo = "Напрям руху підтверджено за поворотами"
             appendEventRow(event: "CalibrationDirectionConfirmed", time: time)
         }
+        if !yawDirectionChecked {
+            filter.reset()
+            currentGForceY = 0
+            maneuverDetector.reset()
+        }
         yawDirectionChecked = true
     }
 }

@@ -149,6 +149,13 @@ struct CompactLabelStyle: LabelStyle {
 
 // MARK: - Підсумок поїздки
 
+struct JourneyReward {
+    let xp: Int
+    let levelBefore: Int
+    let levelAfter: Int
+    let eligible: Bool
+}
+
 struct TripDetailView: View {
     let trip: TripSummary
     // Для щойно завершеної поїздки: причина зупинки чи попередження про запис
@@ -157,6 +164,7 @@ struct TripDetailView: View {
     var newAchievements: [Achievement] = []
     // nil - заголовком буде дата поїздки
     var title: String? = nil
+    var reward: JourneyReward? = nil
 
     var body: some View {
         List {
@@ -172,8 +180,29 @@ struct TripDetailView: View {
             if let score = trip.stats.score {
                 Section {
                     SafetyScoreCard(score: score)
+                    if !trip.stats.hasCompleteScoring {
+                        Label("Оцінка часткова: частину часу напрям або рух не були підтверджені", systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .listRowBackground(Color.clear)
+            }
+
+            if let reward {
+                Section {
+                    Label(reward.xp > 0 ? "+\(reward.xp) XP" : "Досвід за поїздку: 0 XP",
+                          systemImage: "sparkles")
+                        .font(.title2.bold()).foregroundStyle(VeloxColor.accent)
+                    if reward.levelAfter > reward.levelBefore {
+                        Text("Новий рівень: \(reward.levelAfter)!").font(.headline)
+                    }
+                    Text(reward.eligible
+                         ? "Досвід враховує денну межу та нові виконані завдання тижня."
+                         : "Для досвіду потрібна штатно завершена поїздка формату 4 від 5 хв і 500 м із достатньою частотою вимірів та покриттям оцінювання від 95%.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } header: { SectionTitle("Ваш прогрес") }
+                .listRowBackground(VeloxColor.panel)
             }
 
             if !newAchievements.isEmpty {
@@ -198,6 +227,9 @@ struct TripDetailView: View {
                     LabeledContent("Відстань (за GPS)", value: TripFormat.distance(meters))
                 }
                 LabeledContent("Вимірів", value: "\(trip.stats.samples)")
+                if let penalty = trip.stats.totalPenalty {
+                    LabeledContent("Повний штраф", value: "\(penalty) балів")
+                }
                 LabeledContent("Калібрування", value: calibrationText)
             } header: {
                 SectionTitle("Поїздка")

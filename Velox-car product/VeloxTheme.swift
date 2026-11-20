@@ -65,6 +65,7 @@ nonisolated enum AppSettings {
     static let saveRouteKey = "saveRoute"
     static let showLiveMapKey = "showLiveMap"
     static let showTrafficKey = "showTraffic"
+    static let roadObjectsKey = "showOSMRoadObjects"
     static let backgroundRecordingKey = "backgroundRecording"
     static let liveActivityKey = "liveActivity"
 

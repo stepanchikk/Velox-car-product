@@ -108,7 +108,7 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     // не заохочуємо водія натискати кнопки під час руху)
     static let manualRecalibrationMaxSpeed: Double = VeloxConfig.manualRecalibrationMaxSpeed
     // Швидкість GPS старша за цей час вважається невідомою (тунель, паркінг)
-    static let speedMaxAge: TimeInterval = 3.0
+    static let speedMaxAge: TimeInterval = VeloxConfig.speedMaxAge
     // Розбіжність напряму за поворотами з поточним, після якої калібрування виправляється
     static let yawCorrectionAngle: Double = 20.0
 
@@ -185,6 +185,37 @@ class SensorManager: NSObject, ObservableObject, CLLocationManagerDelegate, CXCa
     var callStartedAt: TimeInterval?
     // Відволікання почалось через розмову з телефоном біля вуха
     var handheldCallEpisode = false
+    var focusDistractionRequested = false
+    var handheldDistractionRequested = false
+    // Невелика історія потрібна для відкладених подій блокування екрана.
+    var speedHistory: [(time: TimeInterval, speed: Double)] = []
+    var lastMotionTimestamp: TimeInterval?
+    var lastProcessingMilliseconds: Double = 0
+    var lastSampleGap: TimeInterval = 0
+
+    var movementState: MovementState { movementState(at: sessionTime()) }
+
+    func movementState(at time: TimeInterval) -> MovementState {
+        guard let fix = speedHistory.last(where: { $0.time <= time }) else { return .unknown }
+        return MovementPolicy.state(speed: fix.speed, age: time - fix.time)
+    }
+
+    var maneuversEnabled: Bool {
+        guard let calibration, !isCalibrating else { return false }
+        return calibration.forwardSource != .fallbackFlatMount || yawDirectionChecked
+    }
+
+    var scoringHint: String? {
+        if !maneuversEnabled { return "Оцінка попередня: очікуємо підтвердження напряму руху" }
+        if movementState == .unknown { return "Рух невідомий: штрафи за користування телефоном призупинено" }
+        if movementState == .stationary { return "Стоянка або повільний рух: штрафи за телефон призупинено" }
+        return nil
+    }
+
+    var totalPenalty: Int {
+        VeloxConfig.maneuverPenalty * (hardBrakingCount + hardAccelerationCount)
+            + VeloxConfig.distractionPenalty * distractionCount + distractionDurationPenalty
+    }
 
     // Запис із вимкненим екраном: вмикається на старті поїздки, якщо дозволено
     // налаштуванням і можливо на цьому телефоні (див. backgroundRecordingAvailability)

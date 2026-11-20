@@ -16,6 +16,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.backgroundRecordingKey) private var backgroundRecording = true
     @AppStorage(AppSettings.liveActivityKey) private var liveActivity = true
 
+    @AppStorage(AppSettings.roadObjectsKey) private var showRoadObjects = false
+
     @State private var confirmDeleteTrips = false
     @State private var confirmDeleteProfile = false
 
@@ -43,6 +45,15 @@ struct SettingsView: View {
                 SectionTitle("Поїздка")
             } footer: {
                 Text("Вібрація підказує про різкий маневр чи відволікання, не відриваючи погляду від дороги. Карта стежить за авто сама і показує пройдений шлях і події лише під час поїздки, нічого не зберігаючи.")
+            }
+
+            Section {
+                Toggle("Світлофори та знаки OSM", isOn: $showRoadObjects)
+                Link("© OpenStreetMap contributors", destination: URL(string: "https://www.openstreetmap.org/copyright")!)
+            } header: {
+                SectionTitle("Об’єкти на карті")
+            } footer: {
+                Text("Увімкнення надсилає поточне місце пошуку до overpass-api.de для завантаження об’єктів у радіусі 1,5 км. Дані можуть бути неповними. Це розташування світлофорів і частини знаків, без поточного сигналу чи визначення знака для вашої смуги.")
             }
 
             Section {

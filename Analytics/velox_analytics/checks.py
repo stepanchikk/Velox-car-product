@@ -129,10 +129,10 @@ def trip_distance_km(trip, max_gap=3.0):
     (калібрування, фон) пропускаються. None без швидкості."""
     if trip.speed is None:
         return None
-    ok = ~np.isnan(trip.speed)
+    ok = np.isfinite(trip.speed) & (trip.speed >= 0)
     if ok.sum() < 2:
         return None
-    t, v = trip.t[ok], trip.speed[ok]
+    t, v = trip.t, trip.speed
     dt = np.diff(t)
-    good = (dt > 0) & (dt <= max_gap)
+    good = ok[1:] & ok[:-1] & (dt > 0) & (dt <= max_gap)
     return float(np.sum(((v[1:] + v[:-1]) / 2 * dt)[good]) / 1000)

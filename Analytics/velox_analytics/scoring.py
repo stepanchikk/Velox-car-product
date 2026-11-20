@@ -32,13 +32,25 @@ def driver_rating(trips, config, window=10):
     scored = [trip for trip in trips if trip.final_score_logged is not None][-window:]
     if not scored:
         return None
-    penalties = sum(100 - trip.final_score_logged for trip in scored)
+    from .events import distraction_episodes, episode_seconds
+    def penalty(trip):
+        if trip.penalty_total is not None:
+            return trip.penalty_total
+        if trip.has_event_column:
+            ev = trip.events["Event"]
+            p = trip.params
+            return (int(ev.isin(["HardBraking", "HardAcceleration"]).sum()) * p.maneuver_penalty
+                    + int(ev.eq("Distraction").sum()) * p.distraction_penalty
+                    + sum(duration_penalty(s, p) for s in episode_seconds(distraction_episodes(trip.events))))
+        return 100 - trip.final_score_logged
+    penalties = sum(penalty(trip) for trip in scored)
     exposure = 0.0
     for trip in scored:
         km = trip.distance_km
         exposure += km if km else trip.duration / 3600 * config.rating_fallback_speed_kmh
     exposure = max(exposure, config.rating_distance_km)
-    return max(0, round(100 - penalties / exposure * config.rating_distance_km)), len(scored), exposure
+    import math
+    return max(0, math.floor(100 - penalties / exposure * config.rating_distance_km + 0.5)), len(scored), exposure
 
 
 def trips_word(n):

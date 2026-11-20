@@ -27,9 +27,14 @@ extension SensorManager {
         // Захист від запізнілого виклику після зупинки запису
         guard isRecording else { return }
 
+        let processingStarted = ProcessInfo.processInfo.systemUptime
+        defer { lastProcessingMilliseconds = (ProcessInfo.processInfo.systemUptime - processingStarted) * 1000 }
         let gravity = vector(motion.gravity)
         let userAcceleration = vector(motion.userAcceleration)
         let time = sessionTime(of: motion)
+        lastSampleGap = lastMotionTimestamp.map { max(0, time - $0) } ?? 0
+        lastMotionTimestamp = time
+        reconcileDistraction(at: time)
         // Запис із вимкненим екраном: відкладені рішення про блокування і розблокування
         checkScreenState(time: time)
 
@@ -72,7 +77,7 @@ extension SensorManager {
         currentGForceY = filter.process(raw)
 
         var event = ""
-        if let maneuver = maneuverDetector.detect(filtered: currentGForceY, at: time) {
+        if maneuversEnabled, let maneuver = maneuverDetector.detect(filtered: currentGForceY, at: time) {
             switch maneuver {
             case .hardBraking:
                 hardBrakingCount += 1
@@ -106,7 +111,12 @@ extension SensorManager {
                                tiltDegrees: orientationDetector.lastAngle,
                                score: safetyScore,
                                speed: freshSpeed,
-                               coordinate: freshCoordinate)
+                               coordinate: coordinate(at: time),
+                               penaltyTotal: totalPenalty,
+                               maneuversEnabled: maneuversEnabled,
+                               movement: movementState.rawValue,
+                               processingMilliseconds: lastProcessingMilliseconds,
+                               sampleGap: lastSampleGap)
         if let error = csvWriter.append(row, isSample: isSample), stopOnError {
             stopRecording(reason: error)
             return

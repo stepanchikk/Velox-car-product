@@ -60,6 +60,10 @@ class Check:
 def trip_checks(trip, row):
     """Висновки перевірок поїздки. row - рядок summary.trip_row."""
     checks = []
+    if trip.metadata.get("dataset") == "synthetic":
+        checks.append(Check("info", "СИНТЕТИЧНІ ДАНІ", "Модельне випробування. Ці показники не є результатами реальної поїздки."))
+    if trip.maneuvers_enabled is not None and not trip.maneuvers_enabled.all():
+        checks.append(Check("warn", "Оцінювання маневрів часткове", "До підтвердження напряму руху штрафи за маневри призупинені."))
 
     if row["Гальмувань (лог)"] == NA:
         checks.append(Check("info", "Події не перевірено", "У файлі немає колонки Event (стара версія)."))
@@ -90,7 +94,7 @@ def trip_checks(trip, row):
         g = trip.gps
         detail = f"Кореляція r = {g.r:.2f}, нахил {g.slope:.2f}, інтервалів {g.n}."
         if g.r >= 0.3:
-            checks.append(Check("ok", "Напрям руху підтверджено GPS", detail))
+            checks.append(Check("ok", "Прискорення узгоджується з GPS", detail))
         elif g.r > 0:
             checks.append(Check("warn", "Слабка кореляція з GPS", detail + " Знак правильний, але сигнал слабкий."))
         else:
@@ -111,7 +115,7 @@ def trip_checks(trip, row):
                                 detail + " Без GPS застосунок виправив би напрям."))
 
     background = trip.metadata.get("background")
-    locked = screen_off_intervals(trip.events, trip.t[-1])
+    locked = screen_off_intervals(trip.events, trip.duration)
     if background == "on" or locked:
         seconds = sum(end - start for start, end in locked)
         checks.append(Check("info", "Запис із вимкненим екраном дозволено",
@@ -119,7 +123,7 @@ def trip_checks(trip, row):
                             f"лише за користування телефоном (розблокування не для Velox)."))
     elif background == "off":
         checks.append(Check("info", "Запис лише з увімкненим екраном",
-                            "Фоновий режим був вимкнений або недоступний: блокування екрана вважалось відволіканням."))
+                            "Фоновий режим був вимкнений або недоступний. У форматі 4 штраф за втрату активності можливий лише за підтвердженого руху."))
 
     grace = trip.params.call_focus_loss_grace
     for ts, delay in distractions_at_call_start(trip.events, grace):

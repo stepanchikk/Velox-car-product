@@ -9,6 +9,7 @@ struct FinishedTripPresentation: Identifiable {
     let trip: TripSummary
     let notice: String?
     let newAchievements: [Achievement]
+    let reward: JourneyReward
 
     var id: String { trip.id }
 }
@@ -45,16 +46,16 @@ struct MainTabView: View {
         // Поїздка в історії зʼявляється одразу після зупинки, на будь-якій вкладці,
         // а якщо її щойно збережено - відкривається її підсумок
         .task(id: sensorManager.isRecording) {
-            let unlockedBefore = unlockedAchievementIDs()
             await tripStore.reload(excluding: sensorManager.currentTripFileName)
-            presentFinishedTrip(unlockedBefore: unlockedBefore)
+            presentFinishedTrip()
         }
         .sheet(item: $finishedTrip) { item in
             NavigationStack {
                 TripDetailView(trip: item.trip,
                                notice: item.notice,
                                newAchievements: item.newAchievements,
-                               title: "Поїздку завершено")
+                               title: "Поїздку завершено",
+                               reward: item.reward)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Готово") { finishedTrip = nil }
@@ -74,11 +75,7 @@ struct MainTabView: View {
         }
     }
 
-    private func unlockedAchievementIDs() -> Set<String> {
-        Set(AchievementCatalog.evaluate(tripStore.trips).filter(\.isUnlocked).map(\.id))
-    }
-
-    private func presentFinishedTrip(unlockedBefore: Set<String>) {
+    private func presentFinishedTrip() {
         guard let pending = sensorManager.finishedTrip else { return }
         sensorManager.finishedTrip = nil
         guard let trip = tripStore.trips.first(where: { $0.fileName == pending.fileName }) else {
@@ -86,10 +83,18 @@ struct MainTabView: View {
             sensorManager.showSavedTripMessage(pending)
             return
         }
+        let previous = tripStore.trips.filter { $0.id != trip.id }
+        let unlockedBefore = Set(AchievementCatalog.evaluate(previous).filter(\.isUnlocked).map(\.id))
+        let now = Date()
+        let before = Gamification.evaluate(previous, now: now)
+        let after = Gamification.evaluate(tripStore.trips, now: now)
         let unlocked = AchievementCatalog.evaluate(tripStore.trips)
             .filter { $0.isUnlocked && !unlockedBefore.contains($0.id) }
         finishedTrip = FinishedTripPresentation(trip: trip,
                                                 notice: pending.notice,
-                                                newAchievements: unlocked)
+                                                newAchievements: unlocked,
+                                                reward: JourneyReward(xp: max(0, after.xp - before.xp),
+                                                                      levelBefore: before.level, levelAfter: after.level,
+                                                                      eligible: Gamification.isEligible(trip)))
     }
 }

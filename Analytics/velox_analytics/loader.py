@@ -54,6 +54,8 @@ def load_trip(path, config):
         print(f"  Пропуск {name}: замало даних ({len(df)} рядків)")
         return None
 
+    original = df.copy()
+    _, final_score_in_file = _score_series(original)
     # Службові рядки (події між вимірами) не є вимірами: без них сирий сигнал
     # відновлюється коректно, а графіки не мають зайвих точок
     is_extra = _extra_rows(df)
@@ -65,6 +67,9 @@ def load_trip(path, config):
     df = df.iloc[order].reset_index(drop=True)
     is_extra = is_extra.iloc[order].reset_index(drop=True)
     motion = df[~is_extra].reset_index(drop=True)
+    if motion.empty:
+        print(f"  Пропуск {name}: немає вимірів сенсора")
+        return None
     t = motion["Timestamp"].to_numpy(dtype=float)
     y = motion["Filtered_Y"].to_numpy(dtype=float)
 
@@ -86,7 +91,11 @@ def load_trip(path, config):
         print(f"  Увага: {name}: відновлений сирий сигнал перевищує 5 G. "
               f"Можливо, під час запису натискали 'Скинути' (стан фільтра обнулився).")
 
-    score_series, final_score = _score_series(df)
+    # Остаточні значення визначаються порядком запису, не часом відкладеної події.
+    score_series, _ = _score_series(df)
+    final_score = final_score_in_file
+    penalty_values = original["PenaltyTotal"].dropna() if "PenaltyTotal" in original else []
+    penalty_total = float(penalty_values.iloc[-1]) if len(penalty_values) else None
     return Trip(
         name=name,
         t=t,
@@ -105,7 +114,13 @@ def load_trip(path, config):
         params_changed=bool(changed),
         imu=_imu(df, is_extra, segment),
         segment_kind=_segment_kinds(df["Event"], segment),
-        route=_route(df),
+        route=_route(df, explicit_coordinates=metadata.get("format", "0").isdigit() and int(metadata.get("format", "0")) >= 4),
+        maneuvers_enabled=(motion["ManeuversEnabled"].fillna(0).to_numpy() == 1
+                           if "ManeuversEnabled" in motion else None),
+        penalty_total=penalty_total,
+        session_end=float(df["Timestamp"].max()),
+        processing_ms=motion["Processing_ms"].to_numpy(dtype=float) if "Processing_ms" in motion else None,
+        sample_gaps=motion["SampleGap_s"].to_numpy(dtype=float) if "SampleGap_s" in motion else None,
     )
 
 
@@ -114,10 +129,10 @@ def _clean(df, name):
     if "Event" not in df.columns:      # старі файли не мають колонки Event
         df["Event"] = ""
     df["Event"] = df["Event"].fillna("").astype(str)
-    numeric = ["Timestamp", "Filtered_Y", "Raw_Y", "Score", "Speed_mps", "Lat", "Lon"] + IMU_COLUMNS
+    numeric = ["Timestamp", "Filtered_Y", "Raw_Y", "Score", "Speed_mps", "Lat", "Lon", "PenaltyTotal", "ManeuversEnabled", "Processing_ms", "SampleGap_s"] + IMU_COLUMNS
     for column in numeric:
         if column in df.columns:
-            df[column] = pd.to_numeric(df[column], errors="coerce")
+            df[column] = pd.to_numeric(df[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
 
     n_before = len(df)
     essential = ["Timestamp", "Filtered_Y"] + (["Raw_Y"] if "Raw_Y" in df.columns else [])
@@ -174,12 +189,13 @@ def _segment_kinds(events, segment):
     return kinds
 
 
-def _route(df):
+def _route(df, explicit_coordinates=False):
     """Маршрут (формат 3+ з увімкненим «Зберігати маршрут») або None.
     Подія без координат прив'язується до останньої відомої точки."""
     if not {"Lat", "Lon"}.issubset(df.columns):
         return None
     route = df[["Timestamp", "Lat", "Lon", "Event"]].copy()
-    route[["Lat", "Lon"]] = route[["Lat", "Lon"]].ffill()
+    if not explicit_coordinates:
+        route[["Lat", "Lon"]] = route[["Lat", "Lon"]].ffill()
     route = route.dropna(subset=["Lat", "Lon"])
     return route if len(route) >= 2 else None

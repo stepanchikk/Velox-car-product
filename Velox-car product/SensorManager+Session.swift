@@ -48,9 +48,9 @@ extension SensorManager {
 
     var locationDeniedMessage: String {
         if locationStatus == .reducedAccuracy {
-            return "Увімкнено лише приблизне місцезнаходження, а калібруванню потрібна точна швидкість. Увімкніть: Налаштування → Velox → Геолокація → «Точне місцезнаходження». Без цього телефон треба класти екраном вгору, верхньою частиною вперед."
+            return "Увімкнено лише приблизне місцезнаходження, а калібруванню потрібна точна швидкість. Увімкніть: Налаштування → Velox → Геолокація → «Точне місцезнаходження». Без GPS напрям підтверджується на поворотах; до цього штрафи за маневри призупинено."
         }
-        return "Доступ до геолокації заборонено. Без неї калібрування спрощене: телефон треба класти екраном вгору, верхньою частиною вперед. Дозволити доступ можна в Налаштуваннях."
+        return "Доступ до геолокації заборонено. Без неї напрям уточнюється на поворотах; до підтвердження штрафи за маневри призупинено. Дозволити доступ можна в Налаштуваннях."
     }
 
     func startRecording() {
@@ -105,6 +105,12 @@ extension SensorManager {
         lastRotationRate = Vector3.zero
         lastKnownSpeed = 0.0
         lastSpeedTime = -.infinity
+        speedHistory.removeAll()
+        focusDistractionRequested = false
+        handheldDistractionRequested = false
+        lastMotionTimestamp = nil
+        lastProcessingMilliseconds = 0
+        lastSampleGap = 0
 
         if locationAuthorized {
             setBackgroundLocation(enabled: backgroundRecording)
@@ -140,6 +146,9 @@ extension SensorManager {
             callInProgress = false
             callStartedAt = nil
         }
+        appendRow(event: "TripEnd", time: stopTime, isSample: false, stopOnError: false)
+        focusDistractionRequested = false
+        handheldDistractionRequested = false
         retryCalibrationAt = nil
         // Підсумок лишається на заблокованому екрані ще кілька хвилин
         liveActivity.end(state: liveActivityState(status: "Поїздку завершено"))
@@ -193,11 +202,12 @@ extension SensorManager {
     }
 
     var canManuallyRecalibrate: Bool {
-        lastKnownSpeed < Self.manualRecalibrationMaxSpeed
+        MovementPolicy.canRecalibrate(speed: freshSpeed, age: sessionTime() - lastSpeedTime)
     }
 
-    // Скидання лічильників; файл поїздки під час запису не зачіпається
+    // Під час сесії оцінка й події незмінні. Нова поїздка починається зі скидання.
     func resetData() {
+        guard !isRecording else { return }
         hardBrakingCount = 0
         hardAccelerationCount = 0
         distractionCount = 0

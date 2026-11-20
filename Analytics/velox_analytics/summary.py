@@ -21,7 +21,8 @@ def trip_row(trip):
     logged_brake = int(ev.eq("HardBraking").sum())
     logged_accel = int(ev.eq("HardAcceleration").sum())
     logged_distract = int(ev.eq("Distraction").sum())
-    sim_brake, sim_accel = count_maneuvers(detect_maneuvers(t, y, p.threshold, p.cooldown))
+    sim_brake, sim_accel = count_maneuvers(detect_maneuvers(t, y, p.threshold, p.cooldown, trip.maneuvers_enabled,
+        trip.events.loc[trip.events["Event"].isin(["CalibrationDirectionFix", "CalibrationDirectionConfirmed"]), "Timestamp"]))
 
     seconds = episode_seconds(distraction_episodes(trip.events))
     extra = sum(duration_penalty(sec, p) for sec in seconds)
@@ -45,6 +46,10 @@ def trip_row(trip):
         "Файл": trip.name,
         "Тривалість, с": round(trip.duration, 1),
         "Вимірів": len(t),
+        "Повний штраф": trip.penalty_total if trip.penalty_total is not None else (p.maneuver_penalty * (logged_brake + logged_accel) + p.distraction_penalty * logged_distract + extra if trip.has_event_column else NA),
+        "Оцінювання маневрів, %": round(100 * float(np.mean(trip.maneuvers_enabled)), 1) if trip.maneuvers_enabled is not None else NA,
+        "Обробка p95, мс": round(float(np.nanpercentile(trip.processing_ms, 95)), 3) if trip.processing_ms is not None else NA,
+        "Розривів понад 0.2 с": int(np.sum(trip.sample_gaps > 0.2)) if trip.sample_gaps is not None else NA,
         "Макс. розгін, G": round(float(np.max(y)), 3),
         "Макс. гальмування, G": round(float(abs(np.min(y))), 3),
         "Гальмувань (лог)": logged_brake,
@@ -53,7 +58,7 @@ def trip_row(trip):
         "Телефон у руках, с": round(sum(seconds), 1) if has_durations else NA,
         "Штраф за тривалість": extra if has_durations else NA,
         "Дзвінків": count_calls(ev),
-        "Екран вимкнено, с": (round(sum(e - b for b, e in screen_off_intervals(trip.events, t[-1])), 1)
+        "Екран вимкнено, с": (round(sum(e - b for b, e in screen_off_intervals(trip.events, trip.duration)), 1)
                               if "background" in trip.metadata or ev.eq("ScreenLocked").any() else NA),
         "Гальмувань (перерахунок)": sim_brake,
         "Розгонів (перерахунок)": sim_accel,

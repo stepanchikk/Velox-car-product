@@ -31,13 +31,17 @@ extension SensorManager {
 
         // Перше оновлення може бути старою закешованою позицією: пропускаємо її
         let time = sessionTime(of: location)
-        guard time > -1.0 else { return }
+        guard time >= 0, abs(sessionTime() - time) <= Self.speedMaxAge else { return }
 
         let speed = location.speed
         // speed < 0 означає, що iOS не змогла визначити швидкість
-        if speed >= 0 {
+        if speed.isFinite, speed >= 0, location.speedAccuracy >= 0,
+           location.speedAccuracy < VeloxConfig.maxSpeedAccuracy, time >= lastSpeedTime {
             lastKnownSpeed = speed
             lastSpeedTime = time
+            speedHistory.append((time, speed))
+            speedHistory.removeAll { $0.time < time - 60 }
+            reconcileDistraction(at: sessionTime())
         }
         // Координати з поганою точністю (вулиця між висотками) не пишемо і не малюємо
         if location.horizontalAccuracy >= 0,
@@ -77,12 +81,17 @@ extension SensorManager {
     // Швидкість для CSV: nil, якщо GPS давно мовчить (порожнє значення в колонці
     // краще за застаріле: analyzer.py пропускає порожні значення)
     var freshSpeed: Double? {
-        sessionTime() - lastSpeedTime <= Self.speedMaxAge ? lastKnownSpeed : nil
+        MovementPolicy.state(speed: lastKnownSpeed, age: sessionTime() - lastSpeedTime) != .unknown ? lastKnownSpeed : nil
     }
 
     // Те саме для координат маршруту
     var freshCoordinate: RoutePoint? {
-        guard recordRoute, sessionTime() - lastCoordinateTime <= Self.speedMaxAge else { return nil }
+        coordinate(at: sessionTime())
+    }
+
+    func coordinate(at time: TimeInterval) -> RoutePoint? {
+        guard recordRoute, time >= lastCoordinateTime,
+              time - lastCoordinateTime <= Self.speedMaxAge else { return nil }
         return lastCoordinate
     }
 

@@ -38,7 +38,7 @@ def raw_vs_filtered(trip, config, out_dir):
     for episode in distraction_episodes(events):
         for start, end in episode:
             ax.axvspan(start, end, color=DISTRACTION_COLOR, alpha=0.12, label="Телефон у руках")
-    for start, end in screen_off_intervals(events, t[-1]):
+    for start, end in screen_off_intervals(events, trip.duration):
         ax.axvspan(start, end, color="#1764E8", alpha=0.08, label="Екран заблоковано (запис у фоні)")
     for ts in events[events["Event"] == "CalibrationDirectionFix"]["Timestamp"]:
         ax.axvline(ts, color="black", linestyle="--", linewidth=1.2, alpha=0.7,

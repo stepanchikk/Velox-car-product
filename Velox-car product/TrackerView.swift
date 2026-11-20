@@ -8,6 +8,9 @@ struct TrackerView: View {
     @AppStorage(AppSettings.showLiveAccelerationKey) private var showLiveAcceleration = true
     @AppStorage(AppSettings.showLiveMapKey) private var showLiveMap = true
     @AppStorage(AppSettings.showTrafficKey) private var showTraffic = true
+    @StateObject private var roadFeatures = RoadFeatureStore()
+    @State private var showDrivingMap = false
+    @AppStorage(AppSettings.roadObjectsKey) private var showRoadObjects = false
     @AppStorage(AppSettings.backgroundRecordingKey) private var backgroundRecording = true
 
     var body: some View {
@@ -31,10 +34,34 @@ struct TrackerView: View {
                     // а карту варто перемальовувати лише коли змінились її дані
                     LiveTripMap(route: sensorManager.liveRoute,
                                 speedKmh: sensorManager.currentSpeedKmh,
-                                showsTraffic: showTraffic)
+                                showsTraffic: showTraffic,
+                                features: showRoadObjects ? roadFeatures.features : [])
                         .equatable()
+                        .overlay(alignment: .bottomTrailing) {
+                            if showRoadObjects {
+                                Link("© OpenStreetMap", destination: URL(string: "https://www.openstreetmap.org/copyright")!)
+                                    .font(.caption2).padding(8).background(.regularMaterial, in: Capsule()).padding(8)
+                            }
+                        }
+                        .overlay(alignment: .topLeading) {
+                            Button { showDrivingMap = true } label: {
+                                Label("На весь екран", systemImage: "arrow.up.left.and.arrow.down.right")
+                                    .font(.subheadline.bold()).padding(12)
+                                    .background(.regularMaterial, in: Capsule())
+                            }.padding(12)
+                        }
+                    if showRoadObjects {
+                        Text(roadFeatures.status).font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
+                if sensorManager.isRecording, let hint = sensorManager.scoringHint {
+                    Label(hint, systemImage: "info.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .veloxPanel(radius: 14, padding: 12)
+                }
                 counters
                 if showLiveAcceleration {
                     AccelerationBar(value: sensorManager.currentGForceY,
@@ -47,6 +74,25 @@ struct TrackerView: View {
             .padding(.vertical, 12)
         }
         .background(VeloxColor.background.ignoresSafeArea())
+        .fullScreenCover(isPresented: $showDrivingMap) {
+            DrivingMapScreen(roadFeatures: roadFeatures)
+                .environmentObject(sensorManager)
+        }
+        .task(id: showRoadObjects && sensorManager.isRecording && showLiveMap) {
+            guard showRoadObjects && sensorManager.isRecording && showLiveMap else {
+                roadFeatures.clear()
+                return
+            }
+            while !Task.isCancelled {
+                if let point = sensorManager.liveRoute.points.last,
+                   sensorManager.sessionTime() - sensorManager.liveRoute.lastFixTime <= SensorManager.speedMaxAge {
+                    await roadFeatures.refresh(near: point)
+                } else {
+                    roadFeatures.waitingForLocation()
+                }
+                do { try await Task.sleep(for: .seconds(10)) } catch { break }
+            }
+        }
         // Повідомлення користувачу: помилки сенсора, результат збереження
         .alert("Velox", isPresented: $sensorManager.showAlert) {
             Button("OK", role: .cancel) { }
@@ -183,6 +229,7 @@ struct TrackerView: View {
                     Label("Скинути", systemImage: "arrow.counterclockwise")
                 }
                 .buttonStyle(VeloxSecondaryButtonStyle())
+                .disabled(sensorManager.isRecording)
             }
             // Доступу немає: відкрити Налаштування або записувати без GPS
             .alert("Геолокація недоступна", isPresented: $sensorManager.showLocationDeniedPrompt) {
@@ -194,7 +241,7 @@ struct TrackerView: View {
             }
 
             if sensorManager.isRecording && !sensorManager.canManuallyRecalibrate {
-                Text("Перекалібрування вручну доступне, коли авто стоїть")
+                Text("Перекалібрування доступне лише за свіжою швидкістю GPS менше 7 км/год")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -239,6 +286,8 @@ struct LiveTripMap: View, Equatable {
     let route: LiveRoute
     let speedKmh: Double?
     let showsTraffic: Bool
+    var features: [RoadFeature] = []
+    var expanded = false
 
     @State private var camera: MapCameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
 
@@ -247,11 +296,24 @@ struct LiveTripMap: View, Equatable {
         lhs.route == rhs.route
             && lhs.speedKmh.map { Int($0.rounded()) } == rhs.speedKmh.map { Int($0.rounded()) }
             && lhs.showsTraffic == rhs.showsTraffic
+            && lhs.features == rhs.features && lhs.expanded == rhs.expanded
     }
 
     var body: some View {
         Map(position: $camera) {
-            UserAnnotation()
+            UserAnnotation {
+                Image(systemName: "car.fill")
+                    .font(.title2.bold()).foregroundStyle(.white)
+                    .padding(12).background(VeloxColor.accent, in: Circle())
+                    .overlay(Circle().stroke(.white, lineWidth: 3))
+                    .shadow(radius: 4)
+                    .accessibilityLabel("Ваш автомобіль")
+            }
+            ForEach(features) { feature in
+                Annotation(feature.title, coordinate: feature.point.coordinate) {
+                    RoadFeatureIcon(feature: feature)
+                }
+            }
             if route.points.count >= 2 {
                 MapPolyline(coordinates: route.points.map { $0.coordinate })
                     .stroke(VeloxColor.accent, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
@@ -272,8 +334,9 @@ struct LiveTripMap: View, Equatable {
             speedBadge
                 .padding(12)
         }
-        .frame(height: 260)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(height: expanded ? nil : 260)
+        .frame(maxHeight: expanded ? .infinity : nil)
+        .clipShape(RoundedRectangle(cornerRadius: expanded ? 0 : 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(VeloxColor.hairline, lineWidth: 1)
@@ -367,5 +430,62 @@ struct AccelerationBar: View {
             .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+
+struct RoadFeatureIcon: View {
+    let feature: RoadFeature
+    var body: some View {
+        Group {
+            if feature.kind == .speedLimit, let label = feature.speedLabel {
+                Text(label).font(.caption2.bold()).foregroundStyle(.black)
+                    .padding(5).background(.white, in: Circle())
+                    .overlay(Circle().stroke(.red, lineWidth: 3))
+            } else {
+                Image(systemName: feature.symbol).font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(feature.kind == .signal ? Color.primary : Color.red)
+                    .padding(7).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .accessibilityLabel(feature.title)
+    }
+}
+
+struct DrivingMapScreen: View {
+    @EnvironmentObject private var sensorManager: SensorManager
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var roadFeatures: RoadFeatureStore
+    @AppStorage(AppSettings.showTrafficKey) private var showTraffic = true
+    @AppStorage(AppSettings.roadObjectsKey) private var showRoadObjects = false
+
+    var body: some View {
+        LiveTripMap(route: sensorManager.liveRoute, speedKmh: sensorManager.currentSpeedKmh,
+                    showsTraffic: showTraffic, features: showRoadObjects ? roadFeatures.features : [], expanded: true)
+            .ignoresSafeArea(edges: .horizontal)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Button { dismiss() } label: { Label("Назад", systemImage: "chevron.left").padding(12) }
+                    Spacer()
+                    Label(sensorManager.isRecording ? "Запис триває" : "Запис завершено", systemImage: "record.circle")
+                        .font(.subheadline)
+                    Spacer()
+                    Text("\(sensorManager.safetyScore) балів").font(.headline).padding(.trailing, 16)
+                }.background(.regularMaterial)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 4) {
+                    if showRoadObjects {
+                        Text(roadFeatures.status).font(.caption)
+                        Link("© OpenStreetMap contributors", destination: URL(string: "https://www.openstreetmap.org/copyright")!)
+                            .font(.caption2)
+                        Text("Розташування об’єктів; сигнал світлофора невідомий").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Text("Карта поїздки · без покрокових вказівок").font(.caption2).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity).padding(8).background(.regularMaterial)
+            }
+            .onChange(of: sensorManager.isRecording) { _, recording in
+                if !recording { dismiss() }
+            }
     }
 }

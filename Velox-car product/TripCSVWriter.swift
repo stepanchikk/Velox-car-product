@@ -31,6 +31,12 @@ nonisolated struct TelemetryRow {
     let speed: Double?              // Speed_mps (nil: GPS немає або дані застарілі)
     let coordinate: RoutePoint?     // Lat, Lon (nil: маршрут не зберігається або немає GPS)
 
+    var penaltyTotal: Int? = nil
+    var maneuversEnabled: Bool = true
+    var movement: String = "unknown"
+    var processingMilliseconds: Double = 0
+    var sampleGap: TimeInterval = 0
+
     var csvLine: String {
         let safeState = state.replacingOccurrences(of: ",", with: "")
         let a = userAcceleration
@@ -38,7 +44,7 @@ nonisolated struct TelemetryRow {
         let speedText = speed.map { "\($0)" } ?? ""
         let lat = coordinate.map { "\($0.latitude)" } ?? ""
         let lon = coordinate.map { "\($0.longitude)" } ?? ""
-        return "\(time),\(filtered),\(safeState),\(event),\(raw),\(a.x),\(a.y),\(a.z),\(g.x),\(g.y),\(g.z),\(tiltDegrees),\(score),\(speedText),\(lat),\(lon)"
+        return "\(time),\(filtered),\(safeState),\(event),\(raw),\(a.x),\(a.y),\(a.z),\(g.x),\(g.y),\(g.z),\(tiltDegrees),\(score),\(speedText),\(lat),\(lon),\(penaltyTotal.map(String.init) ?? ""),\(maneuversEnabled ? 1 : 0),\(movement),\(processingMilliseconds),\(sampleGap)"
     }
 }
 
@@ -58,7 +64,7 @@ nonisolated struct TripMetadata: Hashable, Sendable {
     static let linePrefix = "#"
     // Версія формату файлу: 2 - з рядками параметрів,
     // 3 - додано гіроскоп (Gx, Gy, Gz) і маршрут (Lat, Lon)
-    static let formatVersion = "3"
+    static let formatVersion = "4"
 
     private(set) var entries: [Entry] = []
 
@@ -107,6 +113,11 @@ nonisolated struct TripMetadata: Hashable, Sendable {
     static var configValues: [(key: String, value: Double)] {
         [
             ("sampleInterval", VeloxConfig.sampleInterval),
+            ("movementMinSpeed", VeloxConfig.movementMinSpeed),
+            ("speedMaxAge", VeloxConfig.speedMaxAge),
+            ("maxSpeedAccuracy", VeloxConfig.maxSpeedAccuracy),
+            ("ratingDistanceKm", VeloxConfig.ratingDistanceKm),
+            ("ratingFallbackSpeedKmh", VeloxConfig.ratingFallbackSpeedKmh),
             ("filterAlpha", VeloxConfig.filterAlpha),
             ("maneuverThreshold", VeloxConfig.maneuverThreshold),
             ("maneuverCooldown", VeloxConfig.maneuverCooldown),
@@ -213,10 +224,11 @@ nonisolated enum TripSaveResult: Equatable {
 /// рядки накопичуються в буфері й дописуються частинами, тому при аварійному
 /// завершенні застосунку втрачається не більше flushEveryRows останніх рядків.
 nonisolated final class TripCSVWriter {
-    static let header = "Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Gx,Gy,Gz,Tilt_deg,Score,Speed_mps,Lat,Lon"
+    static let header = "Timestamp,Filtered_Y,State,Event,Raw_Y,Ax,Ay,Az,Gx,Gy,Gz,Tilt_deg,Score,Speed_mps,Lat,Lon,PenaltyTotal,ManeuversEnabled,Movement,Processing_ms,SampleGap_s"
 
     let flushEveryRows: Int
     private var pendingRows: [String] = []
+    private var writeFailure: String?
     private var fileHandle: FileHandle?
     private var fileURL: URL?
     private(set) var fileName: String = ""
@@ -239,6 +251,7 @@ nonisolated final class TripCSVWriter {
             try head.write(to: url, atomically: true, encoding: .utf8)
             let handle = try FileHandle(forWritingTo: url)
             _ = try handle.seekToEnd()
+            writeFailure = nil
             fileHandle = handle
             fileURL = url
             self.fileName = fileName
@@ -271,7 +284,9 @@ nonisolated final class TripCSVWriter {
             try handle.write(contentsOf: Data(chunk.utf8))
             return nil
         } catch {
-            return "Помилка запису файлу: \(error.localizedDescription)"
+            let message = "Помилка запису файлу: \(error.localizedDescription)"
+            writeFailure = message
+            return message
         }
     }
 
@@ -291,6 +306,6 @@ nonisolated final class TripCSVWriter {
             try? FileManager.default.removeItem(at: url)
             return .empty
         }
-        return .saved(fileName: fileName, warning: flushError)
+        return .saved(fileName: fileName, warning: writeFailure ?? flushError)
     }
 }
